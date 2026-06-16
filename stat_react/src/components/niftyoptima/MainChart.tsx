@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   ColorType,
   createChart,
@@ -44,7 +44,7 @@ type Props = {
   height?: number;
   showEma?: boolean;
   showVwap?: boolean;
-  emptyMessage?: string;
+  emptyMessage?: ReactNode;
 };
 
 export function MainChart({
@@ -196,7 +196,7 @@ export function MainChart({
     <div className="relative w-full min-h-[280px] rounded-xl border border-nox-line bg-nox-bg">
       <div ref={ref} className="w-full" />
       {empty && (
-        <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-nox-muted pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-nox-muted">
           {emptyMessage}
         </div>
       )}

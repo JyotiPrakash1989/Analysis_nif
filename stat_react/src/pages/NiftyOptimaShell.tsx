@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { MSTOCK_LOGOUT_EVENT } from '../lib/mstockLogin';
 import { EquityAlertsProvider, useEquityAlerts } from '../context/EquityAlertsContext';
 import { NiftyAlertsProvider, useNiftyAlerts } from '../context/NiftyAlertsContext';
 import { OrderLogProvider } from '../context/OrderLogContext';
@@ -51,7 +52,11 @@ export function NiftyOptimaShell() {
   useEffect(() => {
     const onAuth = () => setAuthTick((n) => n + 1);
     window.addEventListener('mstock-auth-ok', onAuth);
-    return () => window.removeEventListener('mstock-auth-ok', onAuth);
+    window.addEventListener(MSTOCK_LOGOUT_EVENT, onAuth);
+    return () => {
+      window.removeEventListener('mstock-auth-ok', onAuth);
+      window.removeEventListener(MSTOCK_LOGOUT_EVENT, onAuth);
+    };
   }, []);
 
   return (

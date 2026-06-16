@@ -109,6 +109,7 @@ import {
 import {
   getEnvSettingsForClient,
   loadStoredEnvIntoProcess,
+  removeStoredEnvKeys,
   saveEnvSettings,
   setEnvSettingsReloadHandler,
 } from './appEnvSettings.mjs';
@@ -262,16 +263,47 @@ function forwardMstock(path, body, res) {
     });
 }
 
+function clearMstockSession() {
+  jwtToken = '';
+  delete process.env.MSTOCK_JWT_TOKEN;
+  delete process.env.VITE_MSTOCK_JWT_TOKEN;
+  mstockWsUrlOverride = (process.env.MSTOCK_WS_URL || '').trim();
+  stopMstockWsFeed();
+  removeStoredEnvKeys(['MSTOCK_JWT_TOKEN']);
+  mstockChainCache = {
+    spot: 0,
+    atm: 0,
+    chain: [],
+    expiry: '',
+    fetchedAt: 0,
+    source: 'sim',
+  };
+}
+
 app.get('/api/mstock/auth-status', (_req, res) => {
   const key = apiKey();
   res.json({
     hasApiKey: Boolean(key),
-    authenticated: Boolean(jwtToken),
-    needsOtp: Boolean(key && !jwtToken),
+    authenticated: hasMstockSessionJwt(jwtToken, key),
+    needsOtp: Boolean(key && !hasMstockSessionJwt(jwtToken, key)),
     apiKeySuffix: key.length >= 4 ? key.slice(-4) : '',
     ipBlocked: isMstockTypeBBlocked(),
     ipBlockMessage: getMstockTypeBBlockMessage(),
     whitelistIp: cachedPublicIp,
+  });
+});
+
+app.post('/api/mstock/logout', async (_req, res) => {
+  clearMstockSession();
+  try {
+    await refreshNiftyIndexFromApi();
+  } catch {
+    /* index may fall back to public/mock */
+  }
+  res.json({
+    status: true,
+    message: 'Logged out — session JWT cleared until you log in again.',
+    authenticated: false,
   });
 });
 

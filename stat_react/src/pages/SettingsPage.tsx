@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useEnvSettings } from '../hooks/useEnvSettings';
+import { useMstockAuth } from '../hooks/useMstockAuth';
 
 export function SettingsPage() {
   const { data, loading, saving, error, saveOk, refresh, save } = useEnvSettings();
+  const { status: auth, busy: authBusy, message: authMessage, login, logout } = useMstockAuth();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [clearKeys, setClearKeys] = useState<Set<string>>(new Set());
 
@@ -71,6 +73,47 @@ export function SettingsPage() {
       {error && <p className="text-rose-400 text-sm">{error}</p>}
       {saveOk && <p className="text-emerald-400 text-sm">{saveOk}</p>}
 
+      <section className="rounded-xl border border-nox-line bg-nox-surface/60 p-4 space-y-3">
+        <h2 className="text-sm font-semibold text-sky-300 uppercase tracking-wide">mStock session</h2>
+        <p className="text-sm text-nox-muted">
+          {auth == null
+            ? 'Checking login status…'
+            : auth.authenticated
+              ? 'Connected — live NIFTY, option chain, and orders use your mStock session (valid until midnight).'
+              : auth.hasApiKey
+                ? 'Not logged in — use SMS OTP to connect live broker data.'
+                : 'Save your mStock API key below, then log in with SMS OTP.'}
+        </p>
+        {auth?.apiKeySuffix ? (
+          <p className="text-[11px] text-nox-muted">
+            API key on server: ••••{auth.apiKeySuffix}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={login}
+            disabled={authBusy}
+            className="rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white"
+          >
+            Log in with SMS OTP
+          </button>
+          <button
+            type="button"
+            onClick={() => void logout()}
+            disabled={authBusy || !auth?.authenticated}
+            className="rounded-lg border border-nox-line bg-nox-bg hover:bg-nox-surface disabled:opacity-40 px-4 py-2 text-sm text-nox-muted hover:text-white disabled:hover:text-nox-muted"
+          >
+            {authBusy ? 'Working…' : 'Log out'}
+          </button>
+        </div>
+        {authMessage ? (
+          <p className={`text-xs ${authMessage.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {authMessage.text}
+          </p>
+        ) : null}
+      </section>
+
       {!loading && data && (
         <form onSubmit={(e) => void onSubmit(e)} className="space-y-6">
           {groups.map(([group, fields]) => (
@@ -131,7 +174,8 @@ export function SettingsPage() {
 
           <p className="text-[11px] text-nox-muted">
             Stored in <code className="text-cyan-300/80">{data.settingsFile}</code>. After save, whitelist your
-            server IP on trade.mstock.com and log in with SMS OTP if needed.
+            server IP on trade.mstock.com, then use <strong className="text-slate-300">Log in with SMS OTP</strong>{' '}
+            above.
           </p>
         </form>
       )}

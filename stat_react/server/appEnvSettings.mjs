@@ -41,6 +41,17 @@ export function setEnvSettingsReloadHandler(fn) {
   reloadHandler = typeof fn === 'function' ? fn : async () => {};
 }
 
+/** Remove keys from settings file and process.env without running reloadHandler. */
+export function removeStoredEnvKeys(keys) {
+  const stored = { ...readStoredRaw() };
+  for (const key of keys) {
+    if (!ALLOWED_KEYS.has(key)) continue;
+    delete stored[key];
+    delete process.env[key];
+  }
+  writeStoredRaw(stored);
+}
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }

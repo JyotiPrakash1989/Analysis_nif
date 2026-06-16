@@ -1,4 +1,5 @@
 import type { NiftyDayChange } from '../../types/niftyoptima';
+import { MstockLoginPromptText } from './MstockLoginPromptText';
 
 type Props = {
   spot: number | null;
@@ -81,8 +82,8 @@ export function HeaderBar({
           <span className={connected ? 'text-emerald-400' : 'text-rose-400'}>{connected ? 'live' : 'reconnecting…'}</span>
         </p>
         {indexError ? (
-          <p className="text-[11px] text-amber-300 mt-1 leading-relaxed max-w-xl">
-            {indexError}
+          <div className="text-[11px] text-amber-300 mt-1 leading-relaxed max-w-xl">
+            <MstockLoginPromptText text={indexError} />
             {ipBlocked ? (
               <>
                 {' '}
@@ -91,7 +92,7 @@ export function HeaderBar({
                 </a>
               </>
             ) : null}
-          </p>
+          </div>
         ) : null}
         {feedNote ? <p className="text-[11px] text-nox-muted mt-1">{feedNote}</p> : null}
       </div>

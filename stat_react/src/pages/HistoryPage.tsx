@@ -1,4 +1,5 @@
 import { MainChart } from '../components/niftyoptima/MainChart';
+import { MstockLoginPromptText } from '../components/niftyoptima/MstockLoginPromptText';
 import { useNiftyHistory } from '../hooks/useNiftyHistory';
 import type { MinuteBar } from '../types/niftyoptima';
 
@@ -48,7 +49,9 @@ export function HistoryPage({ authTick }: Props) {
         </p>
         <p className="text-[11px] text-nox-muted mt-1">{sourceLabel}</p>
         {data?.indexError && !bars.length ? (
-          <p className="text-[11px] text-amber-200/90 mt-1">{data.indexError}</p>
+          <p className="text-[11px] text-amber-200/90 mt-1">
+            <MstockLoginPromptText text={data.indexError} />
+          </p>
         ) : null}
       </header>
       <main className="flex-1 max-w-6xl mx-auto w-full px-3 py-4 space-y-4">
@@ -63,10 +66,16 @@ export function HistoryPage({ authTick }: Props) {
             showEma={false}
             showVwap={false}
             emptyMessage={
-              loading
-                ? 'Loading last 5 sessions from mStock…'
-                : data?.indexError ||
-                  'No mStock history. Log in with SMS OTP on the app, then open History again.'
+              loading ? (
+                'Loading last 5 sessions from mStock…'
+              ) : (
+                <MstockLoginPromptText
+                  text={
+                    data?.indexError ||
+                    'No mStock history. Log in with SMS OTP on the app, then open History again.'
+                  }
+                />
+              )
             }
           />
         </section>

@@ -13,6 +13,7 @@ import type {
 } from '../../types/niftyoptima';
 import type { PlacedOrderDetails } from '../../types/niftyoptima';
 import { PlacedOrderPanel } from './PlacedOrderPanel';
+import { MstockLoginPromptText } from './MstockLoginPromptText';
 import { TradingModeControl } from './TradingModeControl';
 import { VoiceAlertControl } from './VoiceAlertControl';
 
@@ -227,7 +228,12 @@ export function SignalCard({
         {openPositionPanel}
         <p className="text-white font-semibold">Today&apos;s best strategy — awaiting entry</p>
         <p className="text-nox-muted text-xs leading-relaxed">
-          Only one side per day: the higher-scored call (CE) or put (PE) setup. {feedNote(src)}
+          Only one side per day: the higher-scored call (CE) or put (PE) setup.{' '}
+          {src === 'pending' ? (
+            <MstockLoginPromptText text={feedNote(src)} className="inline text-xs" />
+          ) : (
+            feedNote(src)
+          )}
         </p>
 
         {awaitingSide === 'CE' ? (

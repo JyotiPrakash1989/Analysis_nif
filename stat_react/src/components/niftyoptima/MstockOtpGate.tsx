@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { readJson } from '../../lib/apiJson';
+import { MSTOCK_LOGOUT_EVENT, MSTOCK_SHOW_LOGIN_EVENT } from '../../lib/mstockLogin';
 
 const apiBase = import.meta.env.VITE_NIFTYOPTIMA_API ?? '';
 
@@ -26,6 +27,149 @@ function formatLoginError(j: SessionErr): string {
   return j.hint ? `${msg} ${j.hint}` : msg;
 }
 
+type LoginFormProps = {
+  status: AuthStatus;
+  username: string;
+  setUsername: (v: string) => void;
+  password: string;
+  setPassword: (v: string) => void;
+  otp: string;
+  setOtp: (v: string) => void;
+  busy: boolean;
+  message: string;
+  otpSent: boolean;
+  fromEnv: boolean;
+  onRequestOtp: () => void;
+  onSubmitOtp: () => void;
+  onClose?: () => void;
+};
+
+function MstockLoginForm({
+  status,
+  username,
+  setUsername,
+  password,
+  setPassword,
+  otp,
+  setOtp,
+  busy,
+  message,
+  otpSent,
+  fromEnv,
+  onRequestOtp,
+  onSubmitOtp,
+  onClose,
+}: LoginFormProps) {
+  const serverDown = status.serverReachable === false;
+
+  return (
+    <div className="w-full max-w-md rounded-xl border border-nox-line bg-nox-surface p-6 shadow-xl space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-white">mStock login</h1>
+          <p className="text-sm text-nox-muted mt-1">
+            Enter SMS OTP to connect live NIFTY (valid until midnight).
+          </p>
+        </div>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-lg border border-nox-line px-2.5 py-1 text-xs text-nox-muted hover:text-white hover:bg-nox-bg"
+            aria-label="Close login"
+          >
+            Close
+          </button>
+        ) : null}
+      </div>
+
+      {serverDown ? (
+        <p className="text-sm text-rose-300">
+          API server not reachable. In <code className="text-rose-200">stat_react</code> run{' '}
+          <code className="text-rose-200">npm run dev</code> (starts API + Vite). Do not use{' '}
+          <code className="text-rose-200">npm run vite</code> alone.
+        </p>
+      ) : !status.hasApiKey ? (
+        <p className="text-sm text-rose-300">
+          Server has no <code className="text-rose-200">MSTOCK_API_KEY</code> — open the{' '}
+          <strong>Settings</strong> tab and save your API key (or set it in Render Environment).
+        </p>
+      ) : null}
+
+      <div className="space-y-3">
+        <label className="block text-xs text-nox-muted">
+          Client ID / username
+          <input
+            className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            disabled={busy || serverDown}
+          />
+        </label>
+        <label className="block text-xs text-nox-muted">
+          Password
+          <input
+            type="password"
+            className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={busy || serverDown}
+          />
+        </label>
+        {fromEnv ? (
+          <p className="text-[11px] text-cyan-200/90">
+            Client ID and password loaded from <code className="text-cyan-100">.env</code>
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={onRequestOtp}
+          disabled={busy || serverDown || !username.trim() || !password}
+          className="w-full rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2 text-sm font-medium"
+        >
+          {busy ? 'Sending…' : 'Send OTP to mobile'}
+        </button>
+      </div>
+
+      <div className="border-t border-nox-line pt-4 space-y-3">
+        <label className="block text-xs text-nox-muted">
+          OTP {otpSent ? '(check SMS)' : '(after Send OTP)'}
+          <input
+            className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white tracking-widest"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+            inputMode="numeric"
+            placeholder="123456"
+            disabled={busy || serverDown}
+          />
+        </label>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onRequestOtp}
+            disabled={busy || serverDown || !username.trim() || !password}
+            className="flex-1 rounded-lg border border-nox-line bg-nox-bg hover:bg-nox-surface disabled:opacity-50 py-2.5 text-sm font-medium"
+          >
+            Resend OTP
+          </button>
+          <button
+            type="button"
+            onClick={onSubmitOtp}
+            disabled={busy || serverDown || otp.length < 4}
+            className="flex-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 py-2.5 text-sm font-semibold text-white"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+
+      {message ? <p className="text-xs text-amber-300">{message}</p> : null}
+    </div>
+  );
+}
+
 type Props = {
   children: ReactNode;
   onAuthenticated?: () => void;
@@ -40,6 +184,7 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
   const [message, setMessage] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [fromEnv, setFromEnv] = useState(false);
+  const [loginOverlay, setLoginOverlay] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -66,6 +211,7 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
       }
       const next = { ...j, serverReachable: true };
       setStatus(next);
+      if (next.authenticated) setLoginOverlay(false);
       return next;
     } catch {
       setStatus({
@@ -80,6 +226,22 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
 
   useEffect(() => {
     void loadStatus();
+  }, [loadStatus]);
+
+  useEffect(() => {
+    const open = () => setLoginOverlay(true);
+    window.addEventListener(MSTOCK_SHOW_LOGIN_EVENT, open);
+    return () => window.removeEventListener(MSTOCK_SHOW_LOGIN_EVENT, open);
+  }, []);
+
+  useEffect(() => {
+    const onAuthChange = () => void loadStatus();
+    window.addEventListener('mstock-auth-ok', onAuthChange);
+    window.addEventListener(MSTOCK_LOGOUT_EVENT, onAuthChange);
+    return () => {
+      window.removeEventListener('mstock-auth-ok', onAuthChange);
+      window.removeEventListener(MSTOCK_LOGOUT_EVENT, onAuthChange);
+    };
   }, [loadStatus]);
 
   useEffect(() => {
@@ -164,7 +326,10 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
         setMessage('Connected. Refreshing dashboard…');
       }
       const next = await loadStatus();
-      if (next?.authenticated) onAuthenticated?.();
+      if (next?.authenticated) {
+        setLoginOverlay(false);
+        onAuthenticated?.();
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'OTP verification failed');
     } finally {
@@ -180,108 +345,46 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
     );
   }
 
-  if (!status.needsOtp) {
+  const gateActive = status.needsOtp;
+  const overlayActive = loginOverlay && !gateActive;
+
+  if (!gateActive && !overlayActive) {
     return <>{children}</>;
   }
 
-  const serverDown = status.serverReachable === false;
+  const formProps: LoginFormProps = {
+    status,
+    username,
+    setUsername,
+    password,
+    setPassword,
+    otp,
+    setOtp,
+    busy,
+    message,
+    otpSent,
+    fromEnv,
+    onRequestOtp: () => void requestOtp(),
+    onSubmitOtp: () => void submitOtp(),
+    onClose: overlayActive ? () => setLoginOverlay(false) : undefined,
+  };
 
-  return (
-    <div className="min-h-screen bg-nox-bg text-slate-100 flex flex-col">
-      <div className="flex-1 flex items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-xl border border-nox-line bg-nox-surface p-6 shadow-xl space-y-4">
-          <div>
-            <h1 className="text-lg font-semibold text-white">mStock login</h1>
-            <p className="text-sm text-nox-muted mt-1">
-              Enter SMS OTP to connect live NIFTY (valid until midnight).
-            </p>
-          </div>
-
-          {serverDown ? (
-            <p className="text-sm text-rose-300">
-              API server not reachable. In <code className="text-rose-200">stat_react</code> run{' '}
-              <code className="text-rose-200">npm run dev</code> (starts API + Vite). Do not use{' '}
-              <code className="text-rose-200">npm run vite</code> alone.
-            </p>
-          ) : !status.hasApiKey ? (
-            <p className="text-sm text-rose-300">
-              Server has no <code className="text-rose-200">MSTOCK_API_KEY</code> — open the{' '}
-              <strong>Settings</strong> tab and save your API key (or set it in Render Environment).
-            </p>
-          ) : null}
-
-          <div className="space-y-3">
-            <label className="block text-xs text-nox-muted">
-              Client ID / username
-              <input
-                className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-                disabled={busy || serverDown}
-              />
-            </label>
-            <label className="block text-xs text-nox-muted">
-              Password
-              <input
-                type="password"
-                className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                disabled={busy || serverDown}
-              />
-            </label>
-            {fromEnv ? (
-              <p className="text-[11px] text-cyan-200/90">
-                Client ID and password loaded from <code className="text-cyan-100">.env</code>
-              </p>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void requestOtp()}
-              disabled={busy || serverDown || !username.trim() || !password}
-              className="w-full rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2 text-sm font-medium"
-            >
-              {busy ? 'Sending…' : 'Send OTP to mobile'}
-            </button>
-          </div>
-
-          <div className="border-t border-nox-line pt-4 space-y-3">
-            <label className="block text-xs text-nox-muted">
-              OTP {otpSent ? '(check SMS)' : '(after Send OTP)'}
-              <input
-                className="mt-1 w-full rounded-lg border border-nox-line bg-nox-bg px-3 py-2 text-sm text-white tracking-widest"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                inputMode="numeric"
-                placeholder="123456"
-                disabled={busy || serverDown}
-              />
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => void requestOtp()}
-                disabled={busy || serverDown || !username.trim() || !password}
-                className="flex-1 rounded-lg border border-nox-line bg-nox-bg hover:bg-nox-surface disabled:opacity-50 py-2.5 text-sm font-medium"
-              >
-                Resend OTP
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitOtp()}
-                disabled={busy || serverDown || otp.length < 4}
-                className="flex-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 py-2.5 text-sm font-semibold text-white"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-
-          {message ? <p className="text-xs text-amber-300">{message}</p> : null}
+  if (gateActive) {
+    return (
+      <div className="min-h-screen bg-nox-bg text-slate-100 flex flex-col">
+        <div className="flex-1 flex items-center justify-center px-4">
+          <MstockLoginForm {...formProps} />
         </div>
       </div>
-    </div>
+    );
+  }
+
+  return (
+    <>
+      {children}
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+        <MstockLoginForm {...formProps} />
+      </div>
+    </>
   );
 }
