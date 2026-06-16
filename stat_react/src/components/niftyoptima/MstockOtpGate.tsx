@@ -205,8 +205,8 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
             </p>
           ) : !status.hasApiKey ? (
             <p className="text-sm text-rose-300">
-              Server has no <code className="text-rose-200">MSTOCK_API_KEY</code> — add it to{' '}
-              <code className="text-rose-200">Nif/.env</code> and restart <code className="text-rose-200">npm run dev</code>.
+              Server has no <code className="text-rose-200">MSTOCK_API_KEY</code> — open the{' '}
+              <strong>Settings</strong> tab and save your API key (or set it in Render Environment).
             </p>
           ) : null}
 
