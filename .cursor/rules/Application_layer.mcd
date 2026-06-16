@@ -1,0 +1,215 @@
+
+# **Application Layer Guidelines (Riverpod-Only)**
+
+## **Directory Structure**
+
+```
+lib/
+  └── feature_name/
+      └── application/
+          ├── state/
+          │    ├── feature_state.dart         # Immutable state class (freezed)
+          │    └── feature_notifier.dart      # StateNotifier or AsyncNotifier
+          └── providers/
+               └── feature_providers.dart     # All Riverpod providers & DI
+```
+
+**Responsibilities**
+
+* **State folder** → Core state classes and logic using Riverpod
+* **Providers folder** → Setup DI using `Provider`, `StateNotifierProvider`, etc.
+
+---
+
+## **State Class Structure**
+
+1. State classes must:
+
+   * Be **immutable**
+   * Use **`@freezed`** for equality and copyWith
+   * Include a **factory constructor for `initial`** state
+   * Provide **helper getters** for status (loading, success, error)
+
+2. Recommended State Example:
+
+```dart
+@freezed
+class FeatureState with _$FeatureState {
+  const FeatureState._(); // Private constructor for extensions
+
+  const factory FeatureState({
+    @Default(DataState<FeatureModel>.initial()) DataState<FeatureModel> dataState,
+    @Default(false) bool isRefreshing,
+  }) = _FeatureState;
+
+  // Derived state helpers
+  bool get isLoading => dataState.isLoading;
+  bool get hasError => dataState.hasFailure;
+  bool get isSuccess => dataState.isSuccess;
+
+  factory FeatureState.initial() => const FeatureState();
+}
+```
+
+---
+
+## **Notifier (State Manager) Structure**
+
+1. Replaces Cubit with **StateNotifier or AsyncNotifier**:
+
+   * **StateNotifier** → For complex state with multiple fields
+   * **AsyncNotifier** → For async-first state with less boilerplate
+
+2. Notifier responsibilities:
+
+   * Fetch data from **repositories (domain layer)**
+   * Update state using `state = state.copyWith(...)`
+   * **No UI logic** inside the notifier
+
+3. Example using `StateNotifier`:
+
+```dart
+class FeatureNotifier extends StateNotifier<FeatureState> {
+  final IFeatureRepository _repository;
+
+  FeatureNotifier(this._repository) : super(FeatureState.initial());
+
+  Future<void> fetchFeature(String id) async {
+    state = state.copyWith(dataState: const DataState.loading());
+    final result = await _repository.getFeature(FeatureId(id));
+
+    state = result.isSuccess
+        ? state.copyWith(dataState: DataState.success(value: result.success!))
+        : state.copyWith(dataState: DataState.failure(result.failure!));
+  }
+}
+```
+
+---
+
+## **Providers and Dependency Injection**
+
+1. Use **Riverpod providers** instead of GetIt:
+
+   * `Provider` → For repository or service injection
+   * `StateNotifierProvider` → For feature state management
+
+2. Example `feature_providers.dart`:
+
+```dart
+final featureRepositoryProvider = Provider<IFeatureRepository>((ref) {
+  final remoteService = FeatureRemoteService(ref.watch(apiClientProvider));
+  return FeatureRepositoryImpl(remoteService);
+});
+
+final featureNotifierProvider =
+    StateNotifierProvider<FeatureNotifier, FeatureState>((ref) {
+  return FeatureNotifier(ref.watch(featureRepositoryProvider));
+});
+```
+
+---
+
+## **Error Handling**
+
+1. Use **`DataState`** or `AsyncValue` to represent:
+
+   * `loading`
+   * `success`
+   * `failure`
+
+2. Surface **domain errors** to the UI layer via the state:
+
+   ```dart
+   if (state.hasError) {
+     // show error from state.dataState.error
+   }
+   ```
+
+3. Prefer **typed errors** from domain layer instead of `Exception`.
+
+---
+
+## **Naming Conventions**
+
+**Files:**
+
+* State class → `_state.dart`
+* Notifier → `_notifier.dart`
+* Providers → `_providers.dart`
+
+**Classes:**
+
+* State class → `FeatureState`
+* Notifier → `FeatureNotifier`
+* Provider → `featureNotifierProvider` (camelCase)
+
+---
+
+## **Best Practices**
+
+1. **Keep Notifier lightweight**
+
+   * Orchestrates domain calls, manages state
+   * No API or DB logic here
+
+2. **Always inject repositories via providers**
+
+   * Avoid singletons or static methods
+
+3. **State is immutable**
+
+   * Use `copyWith` or Freezed to update
+
+4. **Use AsyncNotifier for simple async state**
+
+   * Reduces boilerplate if you don’t need multiple fields
+
+5. **Testability**
+
+   * Override providers in tests with mocks
+   * Verify state transitions for loading → success/failure
+
+---
+
+## **Code Example (Full)**
+
+```dart
+// state/feature_state.dart
+@freezed
+class FeatureState with _$FeatureState {
+  const FeatureState._();
+
+  const factory FeatureState({
+    @Default(DataState<FeatureModel>.initial()) DataState<FeatureModel> dataState,
+  }) = _FeatureState;
+}
+
+// state/feature_notifier.dart
+class FeatureNotifier extends StateNotifier<FeatureState> {
+  final IFeatureRepository _repository;
+
+  FeatureNotifier(this._repository) : super(FeatureState.initial());
+
+  Future<void> fetchFeature(String id) async {
+    state = state.copyWith(dataState: const DataState.loading());
+    final result = await _repository.getFeature(FeatureId(id));
+
+    state = result.isSuccess
+        ? state.copyWith(dataState: DataState.success(value: result.success!))
+        : state.copyWith(dataState: DataState.failure(result.failure!));
+  }
+}
+
+// providers/feature_providers.dart
+final featureRepositoryProvider = Provider<IFeatureRepository>((ref) {
+  final remoteService = FeatureRemoteService(ref.watch(apiClientProvider));
+  return FeatureRepositoryImpl(remoteService);
+});
+
+final featureNotifierProvider =
+    StateNotifierProvider<FeatureNotifier, FeatureState>((ref) {
+  return FeatureNotifier(ref.watch(featureRepositoryProvider));
+});
+```
+

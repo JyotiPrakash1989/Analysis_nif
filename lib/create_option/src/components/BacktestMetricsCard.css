@@ -1,0 +1,112 @@
+.backtest-metrics-card {
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.backtest-metrics-title {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.option-recommendation {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  border: 1.5px solid;
+  margin-bottom: 1rem;
+}
+
+.option-recommendation.call {
+  background: var(--call-bg);
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.option-recommendation.put {
+  background: var(--put-bg);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.option-recommendation-caption {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.option-recommendation.call .option-recommendation-label {
+  color: var(--call);
+}
+
+.option-recommendation.put .option-recommendation-label {
+  color: var(--put);
+}
+
+.option-recommendation-label {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.option-recommendation-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rec-row {
+  font-size: 0.9rem;
+}
+
+.rec-label {
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-right: 0.35rem;
+}
+
+.rec-value {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.metrics-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.metric-chip {
+  padding: 0.5rem 0.75rem;
+  background: var(--primary-dim);
+  border-radius: var(--radius);
+  min-width: 100px;
+}
+
+.metric-chip-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.metric-chip-value {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.backtest-summary {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}

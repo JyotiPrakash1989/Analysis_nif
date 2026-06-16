@@ -1,0 +1,816 @@
+
+# **Flutter Clean Architecture + Riverpod – Testing Guidelines**
+
+---
+
+## **1. General Testing Rules**
+
+1. **Mirror `lib/` in `test/`**
+
+   * Test folder structure must exactly mirror feature folder structure:
+
+     ```
+     test/
+       └── feature_name/
+           ├── domain/
+           ├── data/
+           ├── application/
+           └── presentation/
+     ```
+
+2. **File Naming**
+
+   * Test files end with `_test.dart`
+   * Use the same base name as the source file:
+
+     * `feature_model.dart` → `feature_model_test.dart`
+     * `feature_notifier.dart` → `feature_notifier_test.dart`
+   * Integration tests: `feature_integration_test.dart`
+   * Test suites: `feature_test_suite.dart`
+
+3. **Test Independence**
+
+   * Avoid shared mutable state between tests
+   * Reset provider overrides between tests (`ProviderContainer().dispose()`)
+   * Use `setUp()` and `tearDown()` for test isolation
+   * Mock external dependencies (Firebase, HTTP, SharedPreferences)
+
+4. **Test Types to Implement**
+
+   * **Unit tests:** Domain logic, repository methods, notifiers
+   * **Widget tests:** Individual widgets with mocked providers
+   * **Integration tests:** End-to-end flows with real providers
+   * **Test suites:** Organized test collections for complex features
+
+---
+
+## **2. Domain Layer Testing**
+
+**Directory:** `test/feature_name/domain/`
+
+**What to Test:**
+
+* **Entities & Value Objects**
+
+  * Immutability and equality
+  * Default constructors and factory methods
+  * `copyWith` methods with all combinations
+  * Validation logic and error cases
+  * JSON serialization/deserialization
+* **Errors**
+
+  * Correct error type creation
+  * Freezed unions pattern matching
+  * Error message consistency
+  * Error equality and comparison
+* **Use Cases**
+
+  * Success & failure scenarios
+  * Return type as `Result<T, E>` with expected behavior
+  * Edge cases and boundary conditions
+  * Input validation and sanitization
+
+**Example Test:**
+
+```dart
+void main() {
+  group('FeatureModel', () {
+    test('supports value equality', () {
+      const model1 = FeatureModel(id: '1', name: 'Test');
+      const model2 = FeatureModel(id: '1', name: 'Test');
+      expect(model1, model2);
+      expect(model1.hashCode, model2.hashCode);
+    });
+
+    test('copyWith creates new instance with updated values', () {
+      const original = FeatureModel(id: '1', name: 'Original');
+      final updated = original.copyWith(name: 'Updated');
+      
+      expect(updated.id, '1');
+      expect(updated.name, 'Updated');
+      expect(updated, isNot(same(original)));
+    });
+
+    test('fromJson creates valid model', () {
+      final json = {'id': '1', 'name': 'Test', 'isActive': true};
+      final model = FeatureModel.fromJson(json);
+      
+      expect(model.id, '1');
+      expect(model.name, 'Test');
+      expect(model.isActive, true);
+    });
+  });
+
+  group('FeatureId', () {
+    test('throws error when empty', () {
+      expect(() => FeatureId(''), throwsArgumentError);
+    });
+
+    test('accepts valid ID', () {
+      const id = FeatureId('valid-id');
+      expect(id.value, 'valid-id');
+    });
+  });
+
+  group('FeatureError', () {
+    test('supports pattern matching', () {
+      const error = FeatureError.notFound();
+      
+      final message = switch (error) {
+        FeatureError.notFound() => 'Not found',
+        FeatureError.validation(:final message) => message,
+        FeatureError.unknown(:final message) => message,
+      };
+      
+      expect(message, 'Not found');
+    });
+  });
+}
+```
+
+---
+
+## **3. Data Layer Testing**
+
+**Directory:** `test/feature_name/data/`
+
+**What to Test:**
+
+* **DTOs**
+
+  * `fromJson` & `toJson` round trip with all field types
+  * `toDomain()` conversion correctness
+  * Nullable field handling
+  * Default value application
+  * JSON key mapping validation
+* **Repository Implementations**
+
+  * Map infrastructure errors → domain errors correctly
+  * Return correct `Result.success` and `Result.failure`
+  * Handle network timeouts and connection errors
+  * Cache invalidation and refresh logic
+  * Batch operations and transactions
+* **Remote & Local Services**
+
+  * Mock API or DB using `mocktail`/`mockito`
+  * Verify correct request paths, headers, and body
+  * Test offline/online behavior
+  * Error response handling
+  * Retry logic and exponential backoff
+
+**Example Test:**
+
+```dart
+void main() {
+  group('FeatureDto', () {
+    test('converts to domain correctly', () {
+      const dto = FeatureDto(
+        id: '1', 
+        name: 'Test', 
+        isActive: true,
+        description: 'Test description',
+        tags: ['tag1', 'tag2'],
+        createdAt: '2023-01-01T00:00:00Z',
+        updatedAt: '2023-01-02T00:00:00Z',
+      );
+      
+      final domain = dto.toDomain();
+      
+      expect(domain.id, '1');
+      expect(domain.name, 'Test');
+      expect(domain.isActive, true);
+      expect(domain.description, 'Test description');
+      expect(domain.tags, ['tag1', 'tag2']);
+    });
+
+    test('handles nullable fields gracefully', () {
+      final json = {'id': '1', 'name': 'Test'};
+      final dto = FeatureDto.fromJson(json);
+      
+      expect(dto.description, '');
+      expect(dto.tags, isEmpty);
+      expect(dto.isActive, false);
+    });
+  });
+
+  group('FeatureRepositoryImpl', () {
+    late MockIFeatureRemoteService mockRemoteService;
+    late MockIFeatureLocalService mockLocalService;
+    late FeatureRepositoryImpl repository;
+
+    setUp(() {
+      mockRemoteService = MockIFeatureRemoteService();
+      mockLocalService = MockIFeatureLocalService();
+      repository = FeatureRepositoryImpl(
+        remoteService: mockRemoteService,
+        localService: mockLocalService,
+      );
+    });
+
+    test('getFeature returns success with valid data', () async {
+      // Arrange
+      const featureId = FeatureId('1');
+      const dto = FeatureDto(id: '1', name: 'Test');
+      const domain = FeatureModel(id: '1', name: 'Test');
+      
+      when(() => mockRemoteService.getFeature('1'))
+          .thenAnswer((_) async => dto);
+
+      // Act
+      final result = await repository.getFeature(featureId);
+
+      // Assert
+      expect(result.isSuccess, true);
+      expect(result.success, domain);
+      verify(() => mockRemoteService.getFeature('1')).called(1);
+    });
+
+    test('getFeature returns failure on network error', () async {
+      // Arrange
+      const featureId = FeatureId('1');
+      when(() => mockRemoteService.getFeature('1'))
+          .thenThrow(NetworkException('Connection failed'));
+
+      // Act
+      final result = await repository.getFeature(featureId);
+
+      // Assert
+      expect(result.isFailure, true);
+      expect(result.error, isA<FeatureError>());
+    });
+  });
+}
+```
+
+---
+
+## **4. Application Layer Testing**
+
+**Directory:** `test/feature_name/application/`
+
+**What to Test:**
+
+* **State Notifiers**
+
+  * Initial state is correct
+  * State transitions: `loading → success` and `loading → failure`
+  * Edge cases (empty data, network error, validation errors)..
+  * Concurrent operations handling
+  * State immutability verification
+* **Providers**
+
+  * Verify that providers return correct types
+  * Use `ProviderContainer` for testing Riverpod logic
+  * Test provider overrides and dependencies
+  * Provider disposal and cleanup
+* **Use Cases (Optional)**
+
+  * Orchestration logic without UI dependencies
+  * Multiple repository calls coordination
+  * Business rule enforcement
+
+**Example Test (Notifier):**
+
+```dart
+void main() {
+  group('FeatureNotifier', () {
+    late ProviderContainer container;
+    late MockIFeatureRepository mockRepository;
+    late FeatureNotifier notifier;
+
+    setUp(() {
+      mockRepository = MockIFeatureRepository();
+      container = ProviderContainer(overrides: [
+        featureRepositoryProvider.overrideWithValue(mockRepository),
+      ]);
+      notifier = container.read(featureNotifierProvider.notifier);
+    });
+
+    tearDown(() {
+      container.dispose();
+    });
+
+    test('initial state is correct', () {
+      final state = container.read(featureNotifierProvider);
+      
+      expect(state.dataState, const DataState<FeatureModel>.initial());
+      expect(state.isRefreshing, false);
+      expect(state.isLoading, false);
+      expect(state.hasError, false);
+    });
+
+    test('fetchFeature emits loading then success', () async {
+      // Arrange
+      const featureId = FeatureId('123');
+      const feature = FeatureModel(id: '123', name: 'Test Feature');
+      
+      when(() => mockRepository.getFeature(featureId))
+          .thenAnswer((_) async => Result.success(feature));
+
+      // Act
+      await notifier.fetchFeature(featureId);
+
+      // Assert
+      final state = container.read(featureNotifierProvider);
+      expect(state.isSuccess, true);
+      expect(state.dataState.value, feature);
+      expect(state.isLoading, false);
+      expect(state.hasError, false);
+    });
+
+    test('fetchFeature emits loading then failure', () async {
+      // Arrange
+      const featureId = FeatureId('123');
+      const error = FeatureError.notFound();
+      
+      when(() => mockRepository.getFeature(featureId))
+          .thenAnswer((_) async => Result.failure(error));
+
+      // Act
+      await notifier.fetchFeature(featureId);
+
+      // Assert
+      final state = container.read(featureNotifierProvider);
+      expect(state.isFailure, true);
+      expect(state.dataState.error, error);
+      expect(state.isLoading, false);
+      expect(state.hasError, true);
+    });
+
+    test('refreshFeature updates refreshing state', () async {
+      // Arrange
+      const feature = FeatureModel(id: '123', name: 'Test Feature');
+      
+      when(() => mockRepository.getFeature(any()))
+          .thenAnswer((_) async => Result.success(feature));
+
+      // Act
+      final future = notifier.refreshFeature();
+      
+      // Assert - check refreshing state during operation
+      final loadingState = container.read(featureNotifierProvider);
+      expect(loadingState.isRefreshing, true);
+      
+      await future;
+      
+      final finalState = container.read(featureNotifierProvider);
+      expect(finalState.isRefreshing, false);
+      expect(finalState.isSuccess, true);
+    });
+  });
+
+  group('FeatureProviders', () {
+    test('featureRepositoryProvider returns correct type', () {
+      final container = ProviderContainer();
+      final repository = container.read(featureRepositoryProvider);
+      
+      expect(repository, isA<IFeatureRepository>());
+      container.dispose();
+    });
+
+    test('featureNotifierProvider returns correct notifier', () {
+      final container = ProviderContainer();
+      final notifier = container.read(featureNotifierProvider.notifier);
+      
+      expect(notifier, isA<FeatureNotifier>());
+      container.dispose();
+    });
+  });
+}
+```
+
+---
+
+## **5. Presentation Layer Testing**
+
+**Directory:** `test/feature_name/presentation/`
+
+**What to Test:**
+
+* **Widgets**
+
+  * Render correct UI for each state (loading, success, error, empty)
+  * Respond to taps/clicks properly with correct callbacks
+  * Use `Key` for testable elements
+  * Accessibility features (semantics, labels)
+  * Responsive behavior and layout constraints
+* **Pages**
+
+  * Integrate with providers in a `ProviderScope`
+  * Use `pumpWidget` to render the page in widget tests
+  * Navigation and routing behavior
+  * Error handling and retry mechanisms
+* **UI-only Providers**
+
+  * Correctly update UI state (e.g., selected tab, search filters)
+  * State persistence across widget rebuilds
+  * Provider disposal and cleanup
+
+**Example Widget Test:**
+
+```dart
+void main() {
+  group('FeaturePage', () {
+    late ProviderContainer container;
+    late MockIFeatureRepository mockRepository;
+
+    setUp(() {
+      mockRepository = MockIFeatureRepository();
+      container = ProviderContainer(overrides: [
+        featureRepositoryProvider.overrideWithValue(mockRepository),
+      ]);
+    });
+
+    tearDown(() {
+      container.dispose();
+    });
+
+    testWidgets('shows loading indicator when fetching data', (tester) async {
+      // Arrange
+      when(() => mockRepository.getFeature(any()))
+          .thenAnswer((_) async {
+        await Future.delayed(const Duration(seconds: 1));
+        return Result.success(const FeatureModel(id: '1', name: 'Test'));
+      });
+
+      // Act
+      await tester.pumpWidget(
+        ProviderScope(
+          parent: container,
+          child: const MaterialApp(home: FeaturePage()),
+        ),
+      );
+
+      // Assert
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Loading...'), findsOneWidget);
+    });
+
+    testWidgets('shows error widget when fetch fails', (tester) async {
+      // Arrange
+      when(() => mockRepository.getFeature(any()))
+          .thenAnswer((_) async => Result.failure(const FeatureError.notFound()));
+
+      // Act
+      await tester.pumpWidget(
+        ProviderScope(
+          parent: container,
+          child: const MaterialApp(home: FeaturePage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(find.byType(ErrorWidget), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+    });
+
+    testWidgets('shows feature content when fetch succeeds', (tester) async {
+      // Arrange
+      const feature = FeatureModel(id: '1', name: 'Test Feature');
+      when(() => mockRepository.getFeature(any()))
+          .thenAnswer((_) async => Result.success(feature));
+
+      // Act
+      await tester.pumpWidget(
+        ProviderScope(
+          parent: container,
+          child: const MaterialApp(home: FeaturePage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(find.text('Test Feature'), findsOneWidget);
+      expect(find.byType(FeatureWidget), findsOneWidget);
+    });
+
+    testWidgets('retry button triggers new fetch', (tester) async {
+      // Arrange
+      when(() => mockRepository.getFeature(any()))
+          .thenAnswer((_) async => Result.failure(const FeatureError.notFound()));
+
+      await tester.pumpWidget(
+        ProviderScope(
+          parent: container,
+          child: const MaterialApp(home: FeaturePage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Act
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+
+      // Assert
+      verify(() => mockRepository.getFeature(any())).called(2);
+    });
+  });
+
+  group('FeatureWidget', () {
+    testWidgets('displays feature information correctly', (tester) async {
+      const feature = FeatureModel(
+        id: '1',
+        name: 'Test Feature',
+        description: 'Test Description',
+        isActive: true,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FeatureWidget(
+              feature: feature,
+              onTap: () {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Test Feature'), findsOneWidget);
+      expect(find.text('Test Description'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    });
+
+    testWidgets('calls onTap when tapped', (tester) async {
+      bool tapped = false;
+      const feature = FeatureModel(id: '1', name: 'Test');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FeatureWidget(
+              feature: feature,
+              onTap: () => tapped = true,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(FeatureWidget));
+      expect(tapped, true);
+    });
+  });
+}
+```
+
+---
+
+## **6. Integration Testing**
+
+**Directory:** `test/feature_name/`
+
+**What to Test:**
+
+* **End-to-end flows** with real providers and minimal mocking
+* **Cross-layer interactions** and data flow
+* **Real repository implementations** with mocked external services
+* **Provider dependency chains** and state propagation
+* **Error handling across layers**
+
+**Example Integration Test:**
+
+```dart
+void main() {
+  group('Feature Integration Tests', () {
+    late ProviderContainer container;
+    late MockIFeatureRemoteService mockRemoteService;
+    late MockIFeatureLocalService mockLocalService;
+
+    setUp(() {
+      mockRemoteService = MockIFeatureRemoteService();
+      mockLocalService = MockIFeatureLocalService();
+      
+      container = ProviderContainer(overrides: [
+        featureRemoteServiceProvider.overrideWithValue(mockRemoteService),
+        featureLocalServiceProvider.overrideWithValue(mockLocalService),
+      ]);
+    });
+
+    tearDown(() {
+      container.dispose();
+    });
+
+    test('complete feature fetch flow works correctly', () async {
+      // Arrange
+      const dto = FeatureDto(id: '1', name: 'Test Feature');
+      const domain = FeatureModel(id: '1', name: 'Test Feature');
+      
+      when(() => mockRemoteService.getFeature('1'))
+          .thenAnswer((_) async => dto);
+      when(() => mockLocalService.saveFeature(any()))
+          .thenAnswer((_) async => true);
+
+      // Act
+      final repository = container.read(featureRepositoryProvider);
+      final result = await repository.getFeature(const FeatureId('1'));
+
+      // Assert
+      expect(result.isSuccess, true);
+      expect(result.success, domain);
+      
+      verify(() => mockRemoteService.getFeature('1')).called(1);
+      verify(() => mockLocalService.saveFeature(dto)).called(1);
+    });
+
+    test('offline fallback works correctly', () async {
+      // Arrange
+      const dto = FeatureDto(id: '1', name: 'Cached Feature');
+      const domain = FeatureModel(id: '1', name: 'Cached Feature');
+      
+      when(() => mockRemoteService.getFeature('1'))
+          .thenThrow(NetworkException('No connection'));
+      when(() => mockLocalService.getFeature('1'))
+          .thenAnswer((_) async => dto);
+
+      // Act
+      final repository = container.read(featureRepositoryProvider);
+      final result = await repository.getFeature(const FeatureId('1'));
+
+      // Assert
+      expect(result.isSuccess, true);
+      expect(result.success, domain);
+      
+      verify(() => mockRemoteService.getFeature('1')).called(1);
+      verify(() => mockLocalService.getFeature('1')).called(1);
+    });
+  });
+}
+```
+
+---
+
+## **7. Test Helpers and Utilities**
+
+**Directory:** `test/helpers/`
+
+**Create reusable test utilities:**
+
+* **Mock factories** for common test scenarios
+* **Test data builders** for consistent test data
+* **Provider test helpers** for common provider setups
+* **Widget test helpers** for common widget testing patterns
+
+**Example Test Helpers:**
+
+```dart
+// test/helpers/test_providers.dart
+class TestProviders {
+  static List<Override> createFeatureOverrides({
+    IFeatureRepository? repository,
+    IFeatureRemoteService? remoteService,
+    IFeatureLocalService? localService,
+  }) {
+    return [
+      if (repository != null)
+        featureRepositoryProvider.overrideWithValue(repository),
+      if (remoteService != null)
+        featureRemoteServiceProvider.overrideWithValue(remoteService),
+      if (localService != null)
+        featureLocalServiceProvider.overrideWithValue(localService),
+    ];
+  }
+
+  static ProviderContainer createTestContainer({
+    List<Override> overrides = const [],
+  }) {
+    return ProviderContainer(overrides: overrides);
+  }
+}
+
+// test/helpers/test_data.dart
+class TestData {
+  static const FeatureModel testFeature = FeatureModel(
+    id: 'test-1',
+    name: 'Test Feature',
+    description: 'Test Description',
+    isActive: true,
+    tags: ['test', 'example'],
+    createdAt: '2023-01-01T00:00:00Z',
+    updatedAt: '2023-01-02T00:00:00Z',
+  );
+
+  static const FeatureDto testFeatureDto = FeatureDto(
+    id: 'test-1',
+    name: 'Test Feature',
+    description: 'Test Description',
+    isActive: true,
+    tags: ['test', 'example'],
+    createdAt: '2023-01-01T00:00:00Z',
+    updatedAt: '2023-01-02T00:00:00Z',
+  );
+
+  static Map<String, dynamic> get testFeatureJson => {
+    'id': 'test-1',
+    'name': 'Test Feature',
+    'description': 'Test Description',
+    'is_active': true,
+    'tags': ['test', 'example'],
+    'created_at': '2023-01-01T00:00:00Z',
+    'updated_at': '2023-01-02T00:00:00Z',
+  };
+}
+
+// test/helpers/widget_test_helpers.dart
+class WidgetTestHelpers {
+  static Future<void> pumpApp(
+    WidgetTester tester, {
+    required Widget child,
+    List<Override> overrides = const [],
+  }) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: overrides,
+        child: MaterialApp(home: child),
+      ),
+    );
+  }
+
+  static Future<void> pumpAndSettleApp(
+    WidgetTester tester, {
+    required Widget child,
+    List<Override> overrides = const [],
+  }) async {
+    await pumpApp(tester, child: child, overrides: overrides);
+    await tester.pumpAndSettle();
+  }
+}
+```
+
+---
+
+## **8. Test Best Practices**
+
+1. **Mock External Dependencies**
+
+   * Use `mocktail` or `mockito` for services & repositories
+   * Mock Firebase, HTTP clients, and platform channels
+   * Avoid mocking domain entities and value objects
+
+2. **Keep Tests Fast**
+
+   * Avoid real network calls or DB writes
+   * Use fake repositories for domain and application tests
+   * Use `pumpWidget` instead of `pumpAndSettle` when possible
+   * Mock timers and delays
+
+3. **Cover All States**
+
+   * **Loading → Success**
+   * **Loading → Failure**
+   * **Idle / Empty states**
+   * **Error states with retry**
+   * **Edge cases and boundary conditions**
+
+4. **Provider Override Strategy**
+
+   * Always override dependencies in tests to isolate state
+   * Use `ProviderContainer` for testing Riverpod logic
+   * Create reusable override helpers for common scenarios
+   * Dispose containers properly in `tearDown`
+
+5. **Maintain Symmetry**
+
+   * If `lib/feature_name/domain/feature_model.dart` exists, test at
+     `test/feature_name/domain/feature_model_test.dart`
+   * Keep test structure identical to source structure
+
+6. **Test Data Management**
+
+   * Use consistent test data builders
+   * Create realistic test scenarios
+   * Avoid hardcoded magic values
+   * Use `TestData` classes for reusable test data
+
+7. **Error Testing**
+
+   * Test all error types and scenarios
+   * Verify error messages and types
+   * Test error recovery and retry mechanisms
+   * Ensure errors propagate correctly through layers
+
+8. **Performance Testing**
+
+   * Test widget rebuild performance
+   * Verify provider efficiency
+   * Test memory leaks and disposal
+   * Monitor test execution time
+
+9. **Accessibility Testing**
+
+   * Test semantic labels and descriptions
+   * Verify keyboard navigation
+   * Test screen reader compatibility
+   * Ensure proper focus management
+
+10. **Documentation**
+
+    * Document complex test scenarios
+    * Explain test data and setup
+    * Keep test names descriptive and clear
+    * Use comments for non-obvious test logic
+
+

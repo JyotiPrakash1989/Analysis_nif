@@ -1,0 +1,537 @@
+
+# **Data Layer (Former Infrastructure) Guidelines**
+
+## **Directory Structure**
+
+```
+lib/
+  └── feature_name/
+      └── data/
+          ├── dtos/
+          │    └── feature_dto.dart
+          ├── sources/
+          │    ├── remote/
+          │    │    └── feature_remote_service.dart
+          │    └── local/
+          │         └── feature_local_service.dart
+          ├── repositories/
+          │    └── feature_repository_impl.dart
+          └── constants/
+               └── feature_api_keys.dart
+```
+
+---
+
+### **Responsibilities by Folder**
+
+1. **`dtos/`**
+
+   * Mirrors API/DB schema
+   * Provides **toDomain()** conversion to entities
+   * Must be **immutable** with `@freezed`
+
+2. **`sources/`**
+
+   * **remote/** → HTTP/GraphQL/Firebase calls with offline support
+   * **local/** → SharedPrefs, SQLite, Hive, or local cache
+   * Handle **raw data access only**, no business logic
+
+3. **`repositories/`**
+
+   * Implements **domain repository interfaces** (`IFeatureRepository`)
+   * Handles **DTO → Domain mapping**
+   * Converts **data errors → domain errors**
+   * **Only entry point** to domain from data layer
+
+4. **`constants/`**
+
+   * Central location for **API keys, endpoints, and paths**
+   * No secrets hardcoded in production builds (use `.env` or Flutter secrets)
+   * Use `static const` for paths and endpoints
+
+---
+
+## **DTO Conventions**
+
+1. **Requirements**
+
+   * Must be **immutable**
+   * Use `@freezed` for equality and `copyWith`
+   * Provide `fromJson` and `toJson` methods
+   * Include `toDomain()` for conversion to domain models
+   * Handle **data validation and sanitization**
+
+2. **Properties**
+
+   * Must **match API response schema**
+   * Use **strong types** (avoid dynamic)
+   * Handle **nullable fields gracefully**
+   * Include **default values** for safe empty states
+
+**Example:**
+
+```dart
+@freezed
+class FeatureDto with _$FeatureDto {
+  const factory FeatureDto({
+    @Default('') String id,
+    @Default('') String name,
+    @JsonKey(name: 'is_active') @Default(false) bool isActive,
+    @Default('') String description,
+    @Default([]) List<String> tags,
+    @JsonKey(name: 'created_at') @Default('') String createdAt,
+    @JsonKey(name: 'updated_at') @Default('') String updatedAt,
+  }) = _FeatureDto;
+
+  factory FeatureDto.fromJson(Map<String, dynamic> json) =>
+      _$FeatureDtoFromJson(json);
+
+  FeatureModel toDomain() => FeatureModel(
+        id: id,
+        name: name,
+        isActive: isActive,
+        description: description,
+        tags: tags,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+}
+```
+
+---
+
+## **Source (Service) Conventions**
+
+1. **Responsibilities**
+
+   * Perform **raw data access only**
+   * Remote services → API/GraphQL/Firebase with offline support
+   * Local services → Database/cache access
+   * Return **DTOs** or raw data, never domain models directly
+   * Handle **data validation, sanitization, and security**
+
+2. **Method Rules**
+
+   * **Async & exception-safe** (wrap with try/catch)
+   * **No domain logic here**
+   * **Do not leak DTOs outside the data layer**
+   * **Return Result<T, E>** for all fallible operations
+   * **Implement retry logic** for network operations
+   * **Add comprehensive logging** for debugging
+
+3. **Advanced Features**
+
+   * **Offline support** with local caching
+   * **Rate limiting** and security monitoring
+   * **Batch operations** for atomic updates
+   * **Data validation** and sanitization
+   * **Timeout handling** with configurable durations
+
+**Example Remote Service:**
+
+```dart
+class FeatureRemoteService {
+  final ApiClient _apiClient;
+  final Logger _logger = Logger();
+  
+  // Constants for configuration
+  static const Duration _timeout = Duration(seconds: 10);
+  static const int _maxRetries = 3;
+  static const Duration _retryDelay = Duration(seconds: 2);
+
+  FeatureRemoteService(this._apiClient);
+
+  /// Fetch feature with retry logic and error handling
+  Future<Result<FeatureDto?, FeatureError>> fetchFeature(String id) async {
+    return _retryOperation(
+      () => _fetchFeatureInternal(id),
+      maxRetries: _maxRetries,
+    );
+  }
+
+  /// Internal method with proper error handling
+  Future<Result<FeatureDto?, FeatureError>> _fetchFeatureInternal(String id) async {
+    try {
+      _logger.d('Fetching feature: $id');
+      
+      final response = await _apiClient.get(
+        FeatureApiKeys.getFeatureById(id),
+        headers: {'Authorization': 'Bearer ${FeatureApiKeys.apiKey}'},
+      ).timeout(_timeout);
+
+      if (response.data != null) {
+        final dto = FeatureDto.fromJson(response.data);
+        _logger.i('Feature fetched successfully: $id');
+        return Result.success(dto);
+      }
+      
+      return Result.success(null);
+    } on TimeoutException {
+      _logger.w('Request timed out for feature: $id');
+      return Result.failure(const FeatureError.timeout());
+    } on ApiException catch (e) {
+      _logger.e('API error fetching feature: ${e.code} - ${e.message}');
+      return Result.failure(_mapApiErrorToDomainError(e));
+    } catch (e) {
+      _logger.e('Unknown error fetching feature: $e');
+      return Result.failure(FeatureError.unknown(e.toString()));
+    }
+  }
+
+  /// Retry operation with exponential backoff
+  Future<Result<T, FeatureError>> _retryOperation<T>(
+    Future<Result<T, FeatureError>> Function() operation,
+    {int maxRetries = 3}
+  ) async {
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      final result = await operation();
+      
+      if (result.isSuccess) {
+        return result;
+      }
+      
+      if (attempt < maxRetries) {
+        _logger.w('Retry attempt $attempt/$maxRetries');
+        await Future.delayed(_retryDelay * attempt);
+      }
+    }
+    
+    return Result.failure(const FeatureError.timeout());
+  }
+
+  /// Map API errors to domain errors
+  FeatureError _mapApiErrorToDomainError(ApiException e) {
+    switch (e.statusCode) {
+      case 404:
+        return const FeatureError.notFound();
+      case 400:
+        return FeatureError.validation(e.message);
+      case 429:
+        return const FeatureError.tooManyRequests();
+      default:
+        return FeatureError.unknown('API Error: ${e.message}');
+    }
+  }
+}
+```
+
+---
+
+## **Repository Implementation Conventions**
+
+1. Implements **domain repository interface** (e.g., `IFeatureRepository`)
+2. Converts **DTO → Domain** and **Data Errors → Domain Errors**
+3. Returns **`Result<T, E>`** for all operations
+4. **Only entry point** to domain from data layer
+5. Handles **local caching** and **offline support**
+
+**Example:**
+
+```dart
+class FeatureRepositoryImpl implements IFeatureRepository {
+  final FeatureRemoteService _remote;
+  final FeatureLocalService _local;
+
+  FeatureRepositoryImpl(this._remote, this._local);
+
+  @override
+  Future<Result<FeatureModel, FeatureError>> getFeature(FeatureId id) async {
+    // Try local cache first
+    final cachedFeature = _local.getFeature(id.value);
+    if (cachedFeature != null) {
+      return Result.success(cachedFeature.toDomain());
+    }
+
+    // Fetch from remote
+    final result = await _remote.fetchFeature(id.value);
+    
+    return result.when(
+      success: (dto) {
+        if (dto != null) {
+          // Cache successful results
+          _local.saveFeature(dto);
+          return Result.success(dto.toDomain());
+        }
+        return const Result.failure(FeatureError.notFound());
+      },
+      failure: (error) => Result.failure(error),
+    );
+  }
+
+  @override
+  Future<Result<FeatureModel, FeatureError>> createFeature(FeatureModel feature) async {
+    final dto = FeatureDto.fromDomain(feature);
+    final result = await _remote.createFeature(dto);
+    
+    return result.when(
+      success: (createdDto) {
+        // Cache locally
+        _local.saveFeature(createdDto);
+        return Result.success(createdDto.toDomain());
+      },
+      failure: (error) => Result.failure(error),
+    );
+  }
+
+  @override
+  Future<Result<FeatureModel, FeatureError>> updateFeature(FeatureModel feature) async {
+    final dto = FeatureDto.fromDomain(feature);
+    final result = await _remote.updateFeature(feature.id, dto);
+    
+    return result.when(
+      success: (_) {
+        // Update local cache
+        _local.updateFeature(dto);
+        return Result.success(feature);
+      },
+      failure: (error) => Result.failure(error),
+    );
+  }
+
+  @override
+  Future<Result<void, FeatureError>> deleteFeature(FeatureId id) async {
+    final result = await _remote.deleteFeature(id.value);
+    
+    return result.when(
+      success: (_) {
+        // Remove from local cache
+        _local.deleteFeature(id.value);
+        return const Result.success(null);
+      },
+      failure: (error) => Result.failure(error),
+    );
+  }
+}
+```
+
+---
+
+## **API Keys & Constants Conventions**
+
+1. **File:** `feature_api_keys.dart`
+2. Use `static const` for **paths and endpoints**
+3. No **real secrets** in source control (use `.env` or Flutter secure storage)
+
+**Example:**
+
+```dart
+abstract class FeatureApiKeys {
+  static const baseUrl = 'https://api.example.com';
+  static const featureEndpoint = '/features';
+
+  static String getFeatureById(String id) => '$featureEndpoint/$id';
+}
+```
+
+---
+
+## **Naming Conventions**
+
+**Files:**
+
+* DTO → `_dto.dart`
+* Remote/Local sources → `_remote_service.dart` / `_local_service.dart`
+* Repository implementations → `_repository_impl.dart`
+* API constants → `_api_keys.dart`
+
+**Classes:**
+
+* DTO → PascalCase + `Dto`
+* Services → PascalCase + `Service`
+* Repository implementation → PascalCase + `RepositoryImpl`
+
+---
+
+## **Advanced Data Layer Patterns**
+
+### **1. Caching Strategy**
+
+```dart
+/// Cache helper class with expiry tracking
+class _CachedData<T> {
+  final T data;
+  final DateTime cachedAt;
+  final Duration expiry;
+
+  _CachedData(this.data, this.expiry) : cachedAt = DateTime.now();
+
+  bool get isExpired => DateTime.now().difference(cachedAt) > expiry;
+}
+
+/// Cache management in remote service
+class FeatureRemoteService {
+  final Map<String, _CachedData<FeatureDto>> _cache = {};
+  static const Duration _cacheExpiry = Duration(minutes: 5);
+
+  Future<Result<FeatureDto?, FeatureError>> getFeature(String id) async {
+    // Check cache first
+    if (_cache.containsKey(id)) {
+      final cached = _cache[id]!;
+      if (!cached.isExpired) {
+        return Result.success(cached.data);
+      }
+      _cache.remove(id); // Remove expired entry
+    }
+
+    // Fetch from remote
+    final result = await _fetchFeatureInternal(id);
+    
+    // Cache successful results
+    if (result.isSuccess && result.data != null) {
+      _cache[id] = _CachedData(result.data!, _cacheExpiry);
+    }
+    
+    return result;
+  }
+}
+```
+
+### **2. Offline Support**
+
+```dart
+/// Offline-capable remote service
+class FeatureRemoteService {
+  Future<Result<FeatureDto?, FeatureError>> getFeature(String id) async {
+    try {
+      // Enable offline persistence
+      await _firestore.enableNetwork();
+      
+      final doc = await _firestore
+          .collection('features')
+          .doc(id)
+          .get(const GetOptions(source: Source.serverAndCache))
+          .timeout(_timeout);
+
+      if (doc.exists) {
+        return Result.success(FeatureDto.fromJson(doc.data()!));
+      }
+      return Result.success(null);
+    } on TimeoutException {
+      return Result.failure(const FeatureError.timeout());
+    } on FirebaseException catch (e) {
+      return Result.failure(_mapFirebaseErrorToDomainError(e));
+    }
+  }
+}
+```
+
+### **3. Batch Operations**
+
+```dart
+/// Batch operations for atomic updates
+class FeatureRemoteService {
+  Future<Result<void, FeatureError>> updateFeaturesBatch(
+    Map<String, Map<String, dynamic>> updates,
+  ) async {
+    try {
+      final batch = _firestore.batch();
+      
+      for (final entry in updates.entries) {
+        final id = entry.key;
+        final data = entry.value;
+        
+        final docRef = _firestore.collection('features').doc(id);
+        batch.update(docRef, data);
+        batch.update(docRef, {'updated_at': FieldValue.serverTimestamp()});
+      }
+      
+      await batch.commit().timeout(_timeout);
+      return const Result.success(null);
+    } on FirebaseException catch (e) {
+      return Result.failure(_mapFirebaseErrorToDomainError(e));
+    }
+  }
+}
+```
+
+### **4. Security & Validation**
+
+```dart
+/// Data validation and sanitization
+class FeatureRemoteService {
+  /// Validate input data
+  Result<void, FeatureError> _validateFeatureData(Map<String, dynamic> data) {
+    final requiredFields = ['name', 'description'];
+    for (final field in requiredFields) {
+      if (!data.containsKey(field) || data[field]?.toString().isEmpty == true) {
+        return Result.failure(FeatureError.validation('Missing required field: $field'));
+      }
+    }
+    
+    // Check for suspicious patterns
+    for (final entry in data.entries) {
+      if (entry.value is String && _hasSuspiciousPatterns(entry.value as String)) {
+        return Result.failure(FeatureError.validation('Suspicious data detected'));
+      }
+    }
+    
+    return const Result.success(null);
+  }
+
+  /// Sanitize input data
+  Map<String, dynamic> _sanitizeFeatureData(Map<String, dynamic> data) {
+    final sanitized = <String, dynamic>{};
+    
+    for (final entry in data.entries) {
+      if (entry.value is String) {
+        sanitized[entry.key] = _sanitizeInput(entry.value as String);
+      } else {
+        sanitized[entry.key] = entry.value;
+      }
+    }
+    
+    return sanitized;
+  }
+}
+```
+
+### **5. Rate Limiting & Security Monitoring**
+
+```dart
+/// Rate limiting and security tracking
+class FeatureRemoteService {
+  final Map<String, int> _requestCounts = {};
+  final Map<String, DateTime> _lastRequestTimes = {};
+  static const int _maxRequestsPerMinute = 60;
+
+  /// Check rate limits
+  Result<void, FeatureError> _checkRateLimit(String userId) {
+    final now = DateTime.now();
+    final lastRequest = _lastRequestTimes[userId];
+    
+    if (lastRequest != null && now.difference(lastRequest).inMinutes < 1) {
+      final count = _requestCounts[userId] ?? 0;
+      if (count >= _maxRequestsPerMinute) {
+        return Result.failure(const FeatureError.tooManyRequests());
+      }
+      _requestCounts[userId] = count + 1;
+    } else {
+      _requestCounts[userId] = 1;
+    }
+    
+    _lastRequestTimes[userId] = now;
+    return const Result.success(null);
+  }
+}
+```
+
+## **Best Practices**
+
+1. **Data layer never exposes DTOs directly to UI**
+2. **Error mapping:** API/DB errors → `FeatureError` (domain)
+3. **No business logic** in data layer
+4. **Repository is the only entry point** to domain
+5. **Implement comprehensive logging** for debugging
+6. **Use dependency injection** for testability
+7. **Handle offline scenarios** gracefully
+8. **Implement proper caching** with expiry
+9. **Add security validation** and sanitization
+10. **Use batch operations** for atomic updates
+11. **Testing**:
+
+    * Mock services for repository tests
+    * Verify correct DTO→Domain mapping
+    * Test error conversion to `Result.failure`
+    * Test offline scenarios and caching
+    * Test rate limiting and security features
+

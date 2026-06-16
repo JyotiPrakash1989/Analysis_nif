@@ -1,0 +1,410 @@
+
+# **Domain Layer Guidelines (Riverpod-Optimized)**
+
+## **Directory Structure**
+
+```
+lib/
+  └── feature_name/
+      └── domain/
+          ├── entities/
+          │    └── feature_model.dart
+          ├── value_objects/
+          │    └── feature_id.dart
+          ├── errors/
+          │    └── feature_error.dart
+          ├── repositories/
+          │    └── i_feature_repository.dart
+          └── use_cases/                       # Optional, for medium/large apps
+               └── get_feature_use_case.dart
+```
+
+* **`entities`** → Core domain models (immutable with Freezed)
+* **`value_objects`** → Strongly typed wrappers for IDs or critical fields
+* **`errors`** → Sealed classes for domain-specific error types
+* **`repositories`** → Abstract contracts that Data Layer implements
+* **`use_cases`** → Optional folder for single-responsibility business rules
+
+---
+
+## **Domain Layer Conventions**
+
+### **1. Model (Entity) Structure**
+
+* Must:
+
+  * Be **immutable**
+  * Use **`@freezed`** for equality, copyWith, and immutability
+  * Provide **default values** for safe empty states
+
+* Properties:
+
+  * Use **strong types** (prefer value objects over raw primitives)
+  * Include **documentation** for clarity
+
+---
+
+### **2. Value Object Structure**
+
+* Encapsulate critical fields like IDs, emails, or names
+* Validate data at construction to enforce invariants
+
+Example:
+
+```dart
+class FeatureId {
+  final String value;
+  FeatureId(this.value) {
+    if (value.isEmpty) throw ArgumentError('Feature ID cannot be empty');
+  }
+}
+```
+
+---
+
+### **3. Interface (Repository) Structure**
+
+* Define **clear contracts** for implementations
+* **Prefix with `I`** (e.g., `IFeatureRepository`)
+* Methods must:
+
+  * Be **`Future`-based** for async operations
+  * Return **`Result<T, E>`**, where:
+
+    * `T` = expected success type
+    * `E` = sealed error type
+  * Include **method and error documentation**
+  * Support **stream operations** for real-time data
+  * Handle **batch operations** for atomic updates
+
+---
+
+### **4. Error Handling**
+
+* Use **sealed classes** or **Freezed unions** instead of enums
+* Encourages **type-safe and descriptive** error handling
+
+Example:
+
+```dart
+@freezed
+sealed class FeatureError with _$FeatureError {
+  const factory FeatureError.notFound() = NotFound;
+  const factory FeatureError.validation(String message) = Validation;
+  const factory FeatureError.unknown(String message) = Unknown;
+}
+```
+
+---
+
+### **5. Naming Conventions**
+
+**Files:**
+
+* Model files → `_model.dart` suffix, snake\_case
+* Value objects → `_vo.dart` suffix (optional)
+* Interface files → `i_` prefix, `_repository.dart` suffix
+* Error files → `_error.dart` suffix
+* Use case files → `_use_case.dart` suffix
+
+**Classes:**
+
+* Models → PascalCase + `Model` suffix
+* Interfaces → `I` prefix + `Repository` suffix
+* Value objects → PascalCase (e.g., `FeatureId`)
+* Errors → PascalCase (e.g., `FeatureError`)
+
+---
+
+### **6. Code Organization**
+
+* **One class per file** (model, VO, interface, or error)
+* Group related models in `entities/`
+* Keep **domain layer independent** of:
+
+  * Flutter
+  * Riverpod
+  * External libraries (except `freezed` and `result_type`)
+
+---
+
+## **Advanced Domain Patterns**
+
+### **1. Value Objects with Validation**
+
+```dart
+/// Enhanced value object with comprehensive validation
+class FeatureId {
+  final String value;
+  
+  static const int minLength = 1;
+  static const int maxLength = 50;
+  static final RegExp _validPattern = RegExp(r'^[a-zA-Z0-9_-]+$');
+
+  FeatureId(this.value) {
+    if (value.isEmpty) {
+      throw ArgumentError('Feature ID cannot be empty');
+    }
+    if (value.length < minLength || value.length > maxLength) {
+      throw ArgumentError('Feature ID must be between $minLength and $maxLength characters');
+    }
+    if (!_validPattern.hasMatch(value)) {
+      throw ArgumentError('Feature ID contains invalid characters');
+    }
+  }
+
+  @override
+  bool operator ==(Object other) => identical(this, other) || other is FeatureId && other.value == value;
+
+  @override
+  int get hashCode => value.hashCode;
+
+  @override
+  String toString() => 'FeatureId($value)';
+}
+```
+
+### **2. Enhanced Error Handling**
+
+```dart
+@freezed
+sealed class FeatureError with _$FeatureError {
+  // Basic errors
+  const factory FeatureError.notFound() = NotFound;
+  const factory FeatureError.validation(String message) = Validation;
+  const factory FeatureError.unknown(String message) = Unknown;
+  
+  // Network errors
+  const factory FeatureError.timeout() = Timeout;
+  const factory FeatureError.networkError() = NetworkError;
+  const factory FeatureError.tooManyRequests() = TooManyRequests;
+  
+  // Authentication errors
+  const factory FeatureError.unauthorized() = Unauthorized;
+  const factory FeatureError.forbidden() = Forbidden;
+  
+  // Business logic errors
+  const factory FeatureError.invalidState(String message) = InvalidState;
+  const factory FeatureError.conflict(String message) = Conflict;
+  
+  // Helper methods
+  bool get isNetworkError => this is Timeout || this is NetworkError;
+  bool get isAuthError => this is Unauthorized || this is Forbidden;
+  bool get isRetryable => this is Timeout || this is NetworkError || this is TooManyRequests;
+}
+```
+
+### **3. Use Cases with Business Logic**
+
+```dart
+/// Use case for feature creation with business rules
+class CreateFeatureUseCase {
+  final IFeatureRepository _repository;
+  final IValidationService _validationService;
+
+  CreateFeatureUseCase(this._repository, this._validationService);
+
+  Future<Result<FeatureModel, FeatureError>> execute({
+    required String name,
+    required String description,
+    List<String> tags = const [],
+  }) async {
+    // Business validation
+    final validationResult = _validationService.validateFeatureData(
+      name: name,
+      description: description,
+      tags: tags,
+    );
+    
+    if (validationResult.isFailure) {
+      return Result.failure(validationResult.error!);
+    }
+
+    // Check for duplicate names
+    final existingFeatures = await _repository.searchFeatures(name);
+    if (existingFeatures.isSuccess && existingFeatures.data!.isNotEmpty) {
+      return Result.failure(const FeatureError.conflict('Feature with this name already exists'));
+    }
+
+    // Create feature
+    final feature = FeatureModel(
+      id: '', // Will be generated by repository
+      name: name,
+      description: description,
+      tags: tags,
+      isActive: true,
+      createdAt: DateTime.now().toIso8601String(),
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+
+    return await _repository.createFeature(feature);
+  }
+}
+```
+
+### **4. Domain Events**
+
+```dart
+/// Domain event for feature creation
+@freezed
+class FeatureCreatedEvent with _$FeatureCreatedEvent {
+  const factory FeatureCreatedEvent({
+    required FeatureId featureId,
+    required String featureName,
+    required DateTime createdAt,
+    required String createdBy,
+  }) = _FeatureCreatedEvent;
+}
+
+/// Domain event for feature update
+@freezed
+class FeatureUpdatedEvent with _$FeatureUpdatedEvent {
+  const factory FeatureUpdatedEvent({
+    required FeatureId featureId,
+    required String featureName,
+    required DateTime updatedAt,
+    required String updatedBy,
+    required Map<String, dynamic> changes,
+  }) = _FeatureUpdatedEvent;
+}
+
+/// Event handler interface
+abstract class IFeatureEventHandler {
+  Future<void> handleFeatureCreated(FeatureCreatedEvent event);
+  Future<void> handleFeatureUpdated(FeatureUpdatedEvent event);
+}
+```
+
+## **Best Practices**
+
+1. **Domain Models**
+
+   * Immutable, focused, and validated
+   * Use **value objects** for critical fields
+   * Include **default constructors** for safe empty states
+   * Implement **comprehensive validation**
+
+2. **Interfaces**
+
+   * Define **minimal, clear contracts**
+   * Return **`Result<T, E>`** for all fallible operations
+   * Document all possible errors
+   * Support **streams** for real-time data
+   * Include **batch operations** for atomic updates
+
+3. **Use Cases (Optional)**
+
+   * Create **single-responsibility use cases** for medium-to-large projects
+   * Keep **pure domain logic** isolated from state management
+   * Implement **business rules** and validation
+   * Handle **domain events** for side effects
+
+4. **Error Handling**
+
+   * Use **sealed classes** for type-safe error handling
+   * Include **network and auth errors**
+   * Provide **helper methods** for error categorization
+   * Support **retry logic** for transient errors
+
+5. **Value Objects**
+
+   * Implement **comprehensive validation**
+   * Use **strong typing** for critical fields
+   * Include **helper methods** for common operations
+   * Override **equality and hashCode**
+
+---
+
+## **Testing Guidelines**
+
+**Directory Structure:**
+
+```
+test/
+  └── feature_name/
+      └── domain/
+          ├── feature_model_test.dart
+          ├── feature_id_test.dart
+          └── feature_repository_test.dart
+```
+
+**Model Testing:**
+
+* Validate **default constructors**
+* Verify `copyWith` and equality
+* Ensure **validation logic** works
+
+**Repository Interface Testing:**
+
+* Test **Result.success** and **Result.failure** scenarios
+* Include **contract tests** for all methods
+
+**Test Naming & Grouping:**
+
+* Group tests logically (success/failure/validation)
+* Use descriptive names (e.g., `returnsNotFoundWhenMissing`)
+
+---
+
+## **Code Example**
+
+```dart
+@freezed
+class FeatureModel with _$FeatureModel {
+  const factory FeatureModel({
+    @Default('') String id,
+    @Default('') String name,
+    @Default(false) bool isActive,
+    @Default('') String description,
+    @Default([]) List<String> tags,
+    @Default('') String createdAt,
+    @Default('') String updatedAt,
+  }) = _FeatureModel;
+}
+
+@freezed
+sealed class FeatureError with _$FeatureError {
+  const factory FeatureError.notFound() = NotFound;
+  const factory FeatureError.validation(String message) = Validation;
+  const factory FeatureError.unknown(String message) = Unknown;
+  const factory FeatureError.timeout() = Timeout;
+  const factory FeatureError.networkError() = NetworkError;
+  const factory FeatureError.tooManyRequests() = TooManyRequests;
+  const factory FeatureError.profileNotFound() = ProfileNotFound;
+}
+
+abstract class IFeatureRepository {
+  /// Fetch feature by ID.
+  /// Returns [Result.failure] with [FeatureError.notFound] if not found.
+  Future<Result<FeatureModel, FeatureError>> getFeature(FeatureId id);
+
+  /// Create a new feature.
+  /// Returns [Result.failure] with [FeatureError.validation] on invalid data.
+  Future<Result<FeatureModel, FeatureError>> createFeature(FeatureModel feature);
+
+  /// Update an existing feature.
+  /// Returns [Result.failure] with [FeatureError.notFound] if feature doesn't exist.
+  Future<Result<FeatureModel, FeatureError>> updateFeature(FeatureModel feature);
+
+  /// Delete a feature by ID.
+  /// Returns [Result.failure] with [FeatureError.notFound] if feature doesn't exist.
+  Future<Result<void, FeatureError>> deleteFeature(FeatureId id);
+
+  /// Stream of feature changes for real-time updates.
+  Stream<FeatureModel?> get featureChanges;
+
+  /// Batch update multiple features atomically.
+  /// Returns [Result.failure] with [FeatureError.validation] on invalid data.
+  Future<Result<void, FeatureError>> updateFeaturesBatch(
+    Map<String, Map<String, dynamic>> updates,
+  );
+
+  /// Get current authenticated user.
+  /// Returns [Result.failure] with [FeatureError.notFound] if no user is authenticated.
+  Future<Result<FeatureModel?, FeatureError>> getCurrentUser();
+
+  /// Stream of authentication state changes.
+  Stream<FeatureModel?> get authStateChanges;
+}
+```
+

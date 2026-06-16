@@ -1,0 +1,213 @@
+
+# **Presentation Layer Guidelines (Riverpod-Only)**
+
+## **Directory Structure**
+
+```
+lib/
+  └── feature_name/
+      └── presentation/
+          ├── pages/
+          │    └── feature_page.dart
+          ├── widgets/
+          │    └── feature_widget.dart
+          └── controllers/
+               └── feature_ui_provider.dart   # Optional UI-only ephemeral state
+```
+
+**Responsibilities by Folder:**
+
+* **pages/** → Full-screen pages that consume Riverpod state
+* **widgets/** → Reusable, focused UI components
+* **controllers/** → Optional UI-only providers (e.g., search filters, animations)
+
+---
+
+## **Page Structure**
+
+1. Pages must:
+
+   * Use **ConsumerWidget** or **ConsumerStatefulWidget**
+   * Read state via `ref.watch(provider)`
+   * Handle **loading, success, and error states**
+   * Use **KSizes** for all layout constants
+
+2. Page Properties:
+
+   * Keep ephemeral UI state in **StateProvider or StateNotifierProvider**
+   * Provide **widget keys for testing**
+   * Avoid putting business logic in the page
+
+**Example:**
+
+```dart
+class FeaturePage extends ConsumerWidget {
+  const FeaturePage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(featureNotifierProvider);
+
+    return Scaffold(
+      body: Padding(
+        padding: EdgeInsets.all(KSize.margin4x),
+        child: switch (state.dataState) {
+          final s when s.isLoading => const LoadingWidget(),
+          final s when s.hasFailure => ErrorWidget(
+              onRetry: () => ref.read(featureNotifierProvider.notifier).fetchFeature('123'),
+          ),
+          final s when s.isSuccess => const FeatureContent(),
+          _ => const SizedBox.shrink(),
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## **Widget Structure**
+
+1. Widgets must:
+
+   * Follow **single responsibility principle**
+   * Be **stateless** unless internal animation or `TextEditingController` is needed
+   * Use **KSizes** for all layout and spacing
+   * Be **pure UI components**, no direct repository calls
+
+2. Widget Properties:
+
+   * Use **named parameters** and **@required** where applicable
+   * Support **test keys**
+   * Avoid holding business logic
+
+**Example:**
+
+```dart
+class FeatureWidget extends ConsumerWidget {
+  const FeatureWidget({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(featureNotifierProvider);
+
+    return Container(
+      padding: EdgeInsets.all(KSize.margin4x),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(KSize.radiusDefault),
+        color: Theme.of(context).colorScheme.surface,
+      ),
+      child: state.isLoading
+          ? const CircularProgressIndicator()
+          : Text(
+              state.dataState.value?.name ?? 'No Data',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+    );
+  }
+}
+```
+
+---
+
+## **UI-Only State (Optional)**
+
+* Keep ephemeral UI state (filters, dialogs, selected tabs) in a **StateProvider** or **Notifier** in `controllers/`
+* Keeps UI concerns **separate from domain/application logic**
+
+**Example UI provider:**
+
+```dart
+final selectedTabProvider = StateProvider<int>((ref) => 0);
+```
+
+---
+
+## **Naming Conventions**
+
+**Files:**
+
+* Page → `_page.dart` suffix
+* Widget → `_widget.dart` suffix
+* UI-only providers → `_ui_provider.dart` suffix
+
+**Classes:**
+
+* Page classes → PascalCase + `Page`
+* Widget classes → PascalCase + `Widget` (if not obvious)
+* UI providers → camelCase (e.g., `selectedTabProvider`)
+
+---
+
+## **Code Organization**
+
+1. **Pages:**
+
+   * One page per file
+   * Consume state via `ref.watch()`
+   * Handle all visual states (loading, error, success)
+   * Delegate reusable UI parts to widgets
+
+2. **Widgets:**
+
+   * Group related widgets in `widgets/` folder
+   * Keep **widgets small and focused**
+   * Extract **reusable components**
+   * Pure UI logic only
+
+---
+
+## **Best Practices**
+
+1. **Layout**
+
+   * Use **KSizes for all spacing and typography**
+   * Avoid hard-coded values
+   * Use semantic scaling for spacing and fonts
+
+2. **State Management**
+
+   * **ref.watch** → For rebuilding UI
+   * **ref.listen** → For side effects (e.g., SnackBars, Navigation)
+   * **ref.read** → For triggering actions without rebuilds
+
+3. **Error Handling**
+
+   * Show **user-friendly error messages**
+   * Provide **retry mechanisms**
+   * Use **switch statements or helper getters** for clean state handling
+
+---
+
+## **Full Example**
+
+```dart
+class FeaturePage extends ConsumerWidget {
+  const FeaturePage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(featureNotifierProvider);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Feature')),
+      body: Padding(
+        padding: EdgeInsets.all(KSize.margin4x),
+        child: Column(
+          children: [
+            if (state.isLoading) const CircularProgressIndicator(),
+            if (state.hasError)
+              ElevatedButton(
+                onPressed: () => ref.read(featureNotifierProvider.notifier).fetchFeature('123'),
+                child: const Text('Retry'),
+              ),
+            if (state.isSuccess) FeatureWidget(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+

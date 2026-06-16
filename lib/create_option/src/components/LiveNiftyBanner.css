@@ -1,0 +1,63 @@
+.live-nifty-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  background: var(--call-bg);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.live-nifty-banner:hover {
+  background: rgba(34, 197, 94, 0.18);
+}
+
+.live-nifty-icon {
+  font-size: 1.5rem;
+}
+
+.live-nifty-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.live-nifty-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.live-nifty-value {
+  font-family: var(--font-mono);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.live-nifty-value.loading {
+  color: var(--primary);
+}
+
+.live-nifty-value.error {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  color: var(--put);
+}
+
+.live-nifty-refresh {
+  padding: 0.35rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.live-nifty-refresh:hover {
+  background: var(--surface-elevated);
+}
