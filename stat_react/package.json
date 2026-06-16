@@ -12,7 +12,13 @@
     "mstock:token": "node scripts/mstock-token.mjs",
     "mstock:totp": "node scripts/mstock-totp.mjs",
     "build": "tsc -b && vite build",
+    "build:gh": "vite build",
+    "build:render": "vite build",
+    "start:prod": "node server/index.mjs",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "cors": "^2.8.5",

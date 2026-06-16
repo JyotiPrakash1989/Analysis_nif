@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
@@ -111,7 +112,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 dotenv.config({ path: path.join(__dirname, '..', '.env'), override: true });
 
-const DESIRED_PORT = Number(process.env.NIFTYOPTIMA_PORT || process.env.PROXY_PORT || 3200);
+const CLOUD_PORT = process.env.PORT ? Number(process.env.PORT) : null;
+const DESIRED_PORT = CLOUD_PORT ?? Number(process.env.NIFTYOPTIMA_PORT || process.env.PROXY_PORT || 3200);
 const STRICT_PORT = process.env.NIFTYOPTIMA_STRICT_PORT === '1';
 const PORT_FALLBACK_MAX = Number(process.env.NIFTYOPTIMA_PORT_FALLBACK_MAX || 30);
 const MSTOCK = 'https://api.mstock.trade';
@@ -1042,6 +1044,18 @@ app.get('/api/nifty-spot', async (_req, res) => {
   });
 });
 
+const distDir = path.join(__dirname, '..', 'dist');
+const serveStatic =
+  process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === '1';
+
+if (serveStatic && existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+  console.log(`[NiftyOptima] Serving UI from ${distDir}`);
+}
+
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: true },
@@ -1782,7 +1796,10 @@ async function listenWithFallback(startPort) {
 
 async function startHttp() {
   let port;
-  if (STRICT_PORT) {
+  if (CLOUD_PORT) {
+    await listenOnce(CLOUD_PORT);
+    port = CLOUD_PORT;
+  } else if (STRICT_PORT) {
     try {
       await listenOnce(DESIRED_PORT);
       port = DESIRED_PORT;
