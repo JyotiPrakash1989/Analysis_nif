@@ -106,20 +106,30 @@ import {
   resetOptionChainThrottle,
   shouldAttemptOptionChainFetch,
 } from './mstockApiGuard.mjs';
+import {
+  getEnvSettingsForClient,
+  loadStoredEnvIntoProcess,
+  saveEnvSettings,
+  setEnvSettingsReloadHandler,
+} from './appEnvSettings.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Repo root (Nif/.env) then stat_react/.env — later files override.
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 dotenv.config({ path: path.join(__dirname, '..', '.env'), override: true });
+loadStoredEnvIntoProcess();
 
 const CLOUD_PORT = process.env.PORT ? Number(process.env.PORT) : null;
 const DESIRED_PORT = CLOUD_PORT ?? Number(process.env.NIFTYOPTIMA_PORT || process.env.PROXY_PORT || 3200);
 const STRICT_PORT = process.env.NIFTYOPTIMA_STRICT_PORT === '1';
 const PORT_FALLBACK_MAX = Number(process.env.NIFTYOPTIMA_PORT_FALLBACK_MAX || 30);
 const MSTOCK = 'https://api.mstock.trade';
-const API_KEY = (process.env.MSTOCK_API_KEY || process.env.VITE_MSTOCK_API_KEY || '')
-  .trim()
-  .replace(/^\uFEFF/, '');
+
+function apiKey() {
+  return (process.env.MSTOCK_API_KEY || process.env.VITE_MSTOCK_API_KEY || '')
+    .trim()
+    .replace(/^\uFEFF/, '');
+}
 let jwtToken = (process.env.MSTOCK_JWT_TOKEN || process.env.VITE_MSTOCK_JWT_TOKEN || '').trim();
 let mstockWsUrlOverride = (process.env.MSTOCK_WS_URL || '').trim();
 
@@ -173,7 +183,7 @@ async function bootstrapJwt(force = false) {
 
 function scheduleTotpJwtRefresh() {
   if (mstockTotpDisabled) return;
-  if (!useAutoTotp() || !normalizeTotpSecret(process.env.MSTOCK_TOTP_SECRET || '') || !API_KEY) return;
+  if (!useAutoTotp() || !normalizeTotpSecret(process.env.MSTOCK_TOTP_SECRET || '') || !apiKey()) return;
   const ms = Number(process.env.MSTOCK_TOTP_REFRESH_MS || 6 * 60 * 60 * 1000);
   setInterval(() => {
     void bootstrapJwt(true).then(() => startMstockWsFeed());
@@ -221,7 +231,7 @@ let mstockChainCache = {
 };
 
 function getBearer() {
-  return jwtToken || API_KEY;
+  return jwtToken || apiKey();
 }
 
 function buildAuthHeader(apiKey, bearer) {
@@ -238,8 +248,8 @@ function forwardMstock(path, body, res) {
   const url = `${MSTOCK}${path}`;
   const headers = {
     'X-Mirae-Version': '1',
-    Authorization: buildAuthHeader(API_KEY, getBearer()),
-    'X-PrivateKey': API_KEY,
+    Authorization: buildAuthHeader(apiKey(), getBearer()),
+    'X-PrivateKey': apiKey(),
     'Content-Type': 'application/json',
   };
   fetch(url, { method: 'POST', headers, body })
@@ -253,7 +263,7 @@ function forwardMstock(path, body, res) {
 }
 
 app.get('/api/mstock/auth-status', (_req, res) => {
-  const key = API_KEY;
+  const key = apiKey();
   res.json({
     hasApiKey: Boolean(key),
     authenticated: Boolean(jwtToken),
@@ -270,7 +280,7 @@ app.get('/api/mstock/login-hints', (_req, res) => {
   res.json({
     username: String(process.env.MSTOCK_USERNAME || '').trim(),
     password: String(process.env.MSTOCK_PASSWORD || '').trim(),
-    hasApiKey: Boolean(API_KEY),
+    hasApiKey: Boolean(apiKey()),
   });
 });
 
@@ -316,17 +326,17 @@ app.post('/api/mstock/request-otp', async (req, res) => {
 });
 
 app.post('/api/mstock/quote', (req, res) => {
-  if (!API_KEY) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
+  if (!apiKey()) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
   forwardMstock('/openapi/typeb/instruments/quote', JSON.stringify(req.body || { mode: 'LTP', exchangeTokens: { NSE: ['999260'] } }), res);
 });
 
 app.post('/api/mstock/historical', (req, res) => {
-  if (!API_KEY) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
+  if (!apiKey()) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
   forwardMstock('/openapi/typeb/instruments/historical', JSON.stringify(req.body || {}), res);
 });
 
 app.post('/api/mstock/session-token', async (req, res) => {
-  if (!API_KEY) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
+  if (!apiKey()) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
   const requestToken = String(req.body?.requestToken || req.body?.otp || '').trim();
   const checksum = String(req.body?.checksum || process.env.MSTOCK_CHECKSUM || 'L').trim();
   if (!requestToken) {
@@ -337,7 +347,7 @@ app.post('/api/mstock/session-token', async (req, res) => {
   }
 
   try {
-    const result = await establishMstockSession(API_KEY, requestToken, checksum);
+    const result = await establishMstockSession(apiKey(), requestToken, checksum);
     applyAccessToken(result.accessToken);
     startMstockWsFeed();
     const sync = await syncMstockSessionData();
@@ -362,7 +372,7 @@ app.post('/api/mstock/session-token', async (req, res) => {
 });
 
 app.post('/api/mstock/verify-totp', async (req, res) => {
-  if (!API_KEY) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
+  if (!apiKey()) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
   const secret = normalizeTotpSecret(process.env.MSTOCK_TOTP_SECRET || '');
   let totp = String(req.body?.totp || '').trim();
   if (!totp) {
@@ -382,7 +392,7 @@ app.post('/api/mstock/verify-totp', async (req, res) => {
     }
   }
   try {
-    const { accessToken } = await mstockVerifyTotp(API_KEY, totp);
+    const { accessToken } = await mstockVerifyTotp(apiKey(), totp);
     applyAccessToken(accessToken);
     startMstockWsFeed();
     const sync = await syncMstockSessionData();
@@ -409,8 +419,8 @@ app.post('/api/place-order', async (req, res) => {
     String(body.jwt ?? body.accessToken ?? body.mstockJwt ?? '').trim() || jwtToken;
   const isSell = String(body.transactiontype || 'BUY').toUpperCase() === 'SELL';
   const out = isSell
-    ? await placeOrder(body, { apiKey: API_KEY, jwt: sessionJwt })
-    : await placeBuyWithExits(body, { apiKey: API_KEY, jwt: sessionJwt });
+    ? await placeOrder(body, { apiKey: apiKey(), jwt: sessionJwt })
+    : await placeBuyWithExits(body, { apiKey: apiKey(), jwt: sessionJwt });
   const mode = body.mode === 'auto' ? 'auto' : 'manual';
   const trigger = body.trigger || 'manual';
   const buy = isSell ? out : (out.buy ?? out);
@@ -591,7 +601,7 @@ app.post('/api/equity/place-order', async (req, res) => {
 
   const suggestFilters = getEquitySuggestSettings();
   try {
-    const snap = await fetchEquitySnapshot(API_KEY, jwtToken, symbol);
+    const snap = await fetchEquitySnapshot(apiKey(), jwtToken, symbol);
     const ltp = snap.ltp > 0 ? snap.ltp : entry;
     const analysis = analyzeEquityIntraday(snap.bars ?? [], ltp, suggestFilters);
     const stock = { symbol, ltp, analysis };
@@ -612,7 +622,7 @@ app.post('/api/equity/place-order', async (req, res) => {
 
   const out = await placeEquityBuyWithExits(
     { symbol, quantity, entry, sl, tgt },
-    { apiKey: API_KEY, jwt: jwtToken }
+    { apiKey: apiKey(), jwt: jwtToken }
   );
   const buy = out.buy ?? out;
   const dayKey = istDayKey();
@@ -678,9 +688,9 @@ app.post('/api/equity/place-order', async (req, res) => {
 app.get('/api/orders/log', async (req, res) => {
   const day = String(req.query?.day || istDayKey());
   let logs = readDayLogs(day);
-  if (hasMstockSessionJwt(jwtToken, API_KEY)) {
+  if (hasMstockSessionJwt(jwtToken, apiKey())) {
     try {
-      const headers = quoteHeaders(API_KEY, jwtToken);
+      const headers = quoteHeaders(apiKey(), jwtToken);
       const { statusCode, text } = await httpsGet('/openapi/typeb/orders', headers);
       if (statusCode === 200) {
         const json = JSON.parse(text);
@@ -742,10 +752,27 @@ app.get('/api/orders/export', (req, res) => {
 
 app.post('/api/cancel-order', async (req, res) => {
   const orderId = req.body?.orderId ?? req.body?.orderid;
-  const out = await cancelOrder(orderId, { apiKey: API_KEY, jwt: jwtToken }, {
+  const out = await cancelOrder(orderId, { apiKey: apiKey(), jwt: jwtToken }, {
     variety: req.body?.variety,
   });
   res.status(out.status || (out.ok ? 200 : 400)).json(out);
+});
+
+app.get('/api/settings/env', (_req, res) => {
+  res.json(getEnvSettingsForClient());
+});
+
+app.post('/api/settings/env', async (req, res) => {
+  try {
+    const patch = req.body?.patch && typeof req.body.patch === 'object' ? req.body.patch : req.body;
+    const clearKeys = Array.isArray(req.body?.clearKeys) ? req.body.clearKeys : [];
+    const out = await saveEnvSettings(patch || {}, { clearKeys });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
 });
 
 app.get('/api/health', (_req, res) => {
@@ -756,7 +783,7 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/mstock/orders', async (req, res) => {
   const sessionJwt =
     String(req.query.jwt ?? req.query.accessToken ?? '').trim() || jwtToken;
-  if (!hasMstockSessionJwt(sessionJwt, API_KEY)) {
+  if (!hasMstockSessionJwt(sessionJwt, apiKey())) {
     return res.status(401).json({
       ok: false,
       orders: [],
@@ -764,7 +791,7 @@ app.get('/api/mstock/orders', async (req, res) => {
     });
   }
   try {
-    const headers = quoteHeaders(API_KEY, sessionJwt);
+    const headers = quoteHeaders(apiKey(), sessionJwt);
     const { statusCode, text } = await httpsGet('/openapi/typeb/orders', headers);
     let json;
     try {
@@ -799,7 +826,7 @@ app.get('/api/mstock/orders', async (req, res) => {
 app.post('/api/mstock/retry-option-chain', async (req, res) => {
   clearMstockIpBlock();
   resetOptionChainThrottle();
-  if (hasMstockSessionJwt(jwtToken, API_KEY)) startMstockWsFeed();
+  if (hasMstockSessionJwt(jwtToken, apiKey())) startMstockWsFeed();
   const q = Number(req.body?.spot ?? req.query?.spot);
   const spot = Number.isFinite(q) && q > 0 ? q : resolveHeadlineSpot();
   if (spot == null) {
@@ -841,7 +868,7 @@ app.get('/api/option-chain', async (req, res) => {
       chainSource: 'none',
     });
   }
-  if (hasMstockSessionJwt(jwtToken, API_KEY)) {
+  if (hasMstockSessionJwt(jwtToken, apiKey())) {
     await refreshMstockOptionChain(spot);
   }
   return res.json(chainFieldsForSpot(spot));
@@ -851,16 +878,16 @@ app.get('/api/option-chain', async (req, res) => {
 app.get('/api/nifty-history', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const tradingDays = Math.min(10, Math.max(1, Number(_req.query.days) || 5));
-  if (!API_KEY) {
+  if (!apiKey()) {
     return res.json({
       bars: [],
       tradingDays,
       indexSource: 'mock',
-      indexError: 'Set MSTOCK_API_KEY or VITE_MSTOCK_API_KEY in .env',
+      indexError: 'Set MSTOCK_API_KEY in Settings tab or Render Environment.',
       polledAt: Date.now(),
     });
   }
-  if (!hasMstockSessionJwt(jwtToken, API_KEY)) {
+  if (!hasMstockSessionJwt(jwtToken, apiKey())) {
     return res.json({
       bars: [],
       tradingDays,
@@ -869,11 +896,11 @@ app.get('/api/nifty-history', async (_req, res) => {
       polledAt: Date.now(),
     });
   }
-  let result = await fetchNiftyDailyBars(API_KEY, jwtToken, process.env, tradingDays);
+  let result = await fetchNiftyDailyBars(apiKey(), jwtToken, process.env, tradingDays);
   if (!result.bars.length && isMstockAuthError(result.error)) {
     const refreshed = await bootstrapJwt(true);
     if (refreshed) {
-      result = await fetchNiftyDailyBars(API_KEY, jwtToken, process.env, tradingDays);
+      result = await fetchNiftyDailyBars(apiKey(), jwtToken, process.env, tradingDays);
     }
   }
   if (result.error === 'MSTOCK_IP_MISMATCH' || isMstockIpMismatch(result.error)) {
@@ -898,7 +925,7 @@ app.get('/api/equity/symbols/search', async (req, res) => {
   const q = String(req.query?.q ?? req.query?.query ?? '').trim();
   if (!q) return res.json({ suggestions: [] });
   try {
-    const suggestions = await searchEquitySymbols(q, API_KEY, jwtToken);
+    const suggestions = await searchEquitySymbols(q, apiKey(), jwtToken);
     return res.json({ suggestions });
   } catch (e) {
     return res.status(500).json({
@@ -951,9 +978,9 @@ app.get('/api/equity/analyze', async (req, res) => {
       minConfidence: Number.isFinite(minConfidence) ? minConfidence : stored.minConfidence,
       minTargetPct: Number.isFinite(minTargetPct) ? minTargetPct : stored.minTargetPct,
     };
-    const out = await analyzeWatchlist(API_KEY, jwtToken, list, filters);
-    void processEquityWatchlist({ apiKey: API_KEY, jwt: jwtToken }, io).catch(() => {});
-    void checkEquityPositionExits({ apiKey: API_KEY, jwt: jwtToken }, io).catch(() => {});
+    const out = await analyzeWatchlist(apiKey(), jwtToken, list, filters);
+    void processEquityWatchlist({ apiKey: apiKey(), jwt: jwtToken }, io).catch(() => {});
+    void checkEquityPositionExits({ apiKey: apiKey(), jwt: jwtToken }, io).catch(() => {});
     return res.json({ ...out, daySuggestions: readEquitySuggestions() });
   } catch (e) {
     return res.status(500).json({
@@ -969,7 +996,7 @@ app.get('/api/equity/analyze', async (req, res) => {
 /** Live NIFTY 50 snapshot — refreshes from mStock on every request (browser polls this). */
 app.get('/api/nifty-spot', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  if (!API_KEY) {
+  if (!apiKey()) {
     return res.json({
       spot: null,
       atm: null,
@@ -977,7 +1004,7 @@ app.get('/api/nifty-spot', async (_req, res) => {
       optionChainExpiry: nearestNiftyWeeklyExpiry(),
       bars1m: [],
       indexSource: 'mock',
-      indexError: 'Set MSTOCK_API_KEY or VITE_MSTOCK_API_KEY in .env',
+      indexError: 'Set MSTOCK_API_KEY in Settings tab or Render Environment.',
       indexFromLastCandle: false,
       polledAt: 0,
     });
@@ -997,7 +1024,7 @@ app.get('/api/nifty-spot', async (_req, res) => {
   const bars1m = chartBarsForPayload();
   const spot = resolveHeadlineSpot();
   if (spot != null) {
-    if (hasMstockSessionJwt(jwtToken, API_KEY)) {
+    if (hasMstockSessionJwt(jwtToken, apiKey())) {
       await refreshMstockOptionChain(spot);
     }
     const { atm, optionChain, optionChainExpiry, chainSource } = chainFieldsForSpot(spot);
@@ -1157,7 +1184,7 @@ async function applyPublicHeadlineFallback(mstockErr = '') {
 }
 
 function useMstockForMarketData() {
-  return Boolean(API_KEY);
+  return Boolean(apiKey());
 }
 
 async function seedPublicIntradayBars() {
@@ -1184,18 +1211,18 @@ async function seedPublicIntradayBars() {
 }
 
 async function refreshLiveIntradayBars() {
-  if (!API_KEY || liveBarsRefreshInFlight) return 0;
+  if (!apiKey() || liveBarsRefreshInFlight) return 0;
   liveBarsRefreshInFlight = true;
   try {
-    if (!hasMstockSessionJwt(jwtToken, API_KEY)) {
+    if (!hasMstockSessionJwt(jwtToken, apiKey())) {
       if (shouldUsePublicSpotFallback()) await seedPublicIntradayBars();
       return liveIntradayBars.length;
     }
-    let { bars, error } = await fetchNifty1mBars(API_KEY, jwtToken, process.env);
+    let { bars, error } = await fetchNifty1mBars(apiKey(), jwtToken, process.env);
     if (!bars.length && isMstockAuthError(error)) {
       const refreshed = await bootstrapJwt(true);
       if (refreshed) {
-        ({ bars, error } = await fetchNifty1mBars(API_KEY, jwtToken, process.env));
+        ({ bars, error } = await fetchNifty1mBars(apiKey(), jwtToken, process.env));
       }
     }
     if (bars.length) {
@@ -1247,7 +1274,7 @@ function startMstockWsFeed() {
   const wsUrl = getMstockWsUrl();
   if (!wsUrl || mstockWsClient) return;
   if (isMstockTypeBBlocked()) return;
-  if (!hasMstockSessionJwt(jwtToken, API_KEY)) return;
+  if (!hasMstockSessionJwt(jwtToken, apiKey())) return;
   console.log('[NiftyOptima] mStock broadcast WebSocket:', wsUrl.split('?')[0]);
   mstockWsClient = startMstockBroadcastWs(wsUrl, {
     onLtp: applyWsNiftyLtp,
@@ -1256,7 +1283,7 @@ function startMstockWsFeed() {
 }
 
 async function refreshNiftyIndexFromApi() {
-  if (!API_KEY) return;
+  if (!apiKey()) return;
   if (wsLtpIsFresh(15_000)) return;
   let mstockErr = '';
   /** @type {number | null} */
@@ -1264,7 +1291,7 @@ async function refreshNiftyIndexFromApi() {
 
   if (jwtToken) {
     try {
-      const r = await fetchNiftyIndexLtp(API_KEY, jwtToken);
+      const r = await fetchNiftyIndexLtp(apiKey(), jwtToken);
       if (r.ltp != null && Number.isFinite(r.ltp) && !r.fromLastCandle) {
         latestIndexLtp = r.ltp;
         liveIntradayBars.updateLtp(r.ltp);
@@ -1378,7 +1405,7 @@ function wsLtpIsFresh(maxAgeMs = 15_000) {
 }
 
 function buildChainUserNote() {
-  if (!hasMstockSessionJwt(jwtToken, API_KEY)) {
+  if (!hasMstockSessionJwt(jwtToken, apiKey())) {
     return 'Log in with SMS OTP (mStock login screen) for live broker CE/PE prices.';
   }
   if (isMstockTypeBBlocked()) return getMstockTypeBBlockMessage();
@@ -1386,10 +1413,10 @@ function buildChainUserNote() {
 }
 
 async function refreshMstockOptionChain(spot, force = false) {
-  if (!API_KEY || !hasMstockSessionJwt(jwtToken, API_KEY) || spot == null) return false;
+  if (!apiKey() || !hasMstockSessionJwt(jwtToken, apiKey()) || spot == null) return false;
   if (!force && !shouldAttemptOptionChainFetch()) return false;
   try {
-    const live = await fetchMstockNiftyOptionChain(API_KEY, jwtToken, spot);
+    const live = await fetchMstockNiftyOptionChain(apiKey(), jwtToken, spot);
     if (!live.chain?.length) return false;
     mstockChainCache = {
       spot,
@@ -1452,7 +1479,7 @@ function chainFieldsForSpot(spot) {
     chainSource: 'sim',
     chainIpBlocked: isMstockTypeBBlocked(),
     chainNote: note || undefined,
-    needsLogin: !hasMstockSessionJwt(jwtToken, API_KEY),
+    needsLogin: !hasMstockSessionJwt(jwtToken, apiKey()),
   };
 }
 
@@ -1487,7 +1514,7 @@ function resolveBarsForMerge(payload) {
     return { bars1m: feedBars, barsForCtx: feedBars };
   }
   const liveBars = chartBarsForPayload();
-  const mstockSession = hasMstockSessionJwt(jwtToken, API_KEY);
+  const mstockSession = hasMstockSessionJwt(jwtToken, apiKey());
   const barsForCtx = pickBarsForStrategy(liveBars, feedBars);
   const bars1m =
     useMstockForMarketData() && mstockSession
@@ -1569,7 +1596,7 @@ function runDailyBuyPipeline(spot, strategy, chainRows) {
     if (emitKey !== lastEmittedDailySignalKey) {
       lastEmittedDailySignalKey = emitKey;
       io.emit('signal', activeSignal);
-      void autoBuyOnSignal(activeSignal, { apiKey: API_KEY, jwt: jwtToken }).then((r) => {
+      void autoBuyOnSignal(activeSignal, { apiKey: apiKey(), jwt: jwtToken }).then((r) => {
         if (!r.skipped && r.log) io.emit('orderLog', r.log);
         if (!r.skipped && r.targetSellLog) io.emit('orderLog', r.targetSellLog);
         if (!r.skipped && r.stopLossSellLog) io.emit('orderLog', r.stopLossSellLog);
@@ -1590,7 +1617,7 @@ function runDailyBuyPipeline(spot, strategy, chainRows) {
   }
 
   if (chainRows.length) {
-    void checkPositionExits(chainRows, { apiKey: API_KEY, jwt: jwtToken }).then((r) => {
+    void checkPositionExits(chainRows, { apiKey: apiKey(), jwt: jwtToken }).then((r) => {
       for (const ex of r.exits || []) {
         if (ex.log) io.emit('orderLog', ex.log);
       }
@@ -1653,7 +1680,7 @@ function mergeLiveIndex(payload) {
   const spot = resolveHeadlineSpot();
   const chainFields = spot != null ? chainFieldsForSpot(spot) : null;
 
-  if (!API_KEY) {
+  if (!apiKey()) {
     return {
       ...withBars,
       ...(chainFields ?? {}),
@@ -1825,10 +1852,10 @@ async function startHttp() {
   void logLanUrls(port);
   void (async () => {
     try {
-    if (!API_KEY) {
-      console.warn('[NiftyOptima] MSTOCK_API_KEY / VITE_MSTOCK_API_KEY not set — index uses mock until .env is configured');
+    if (!apiKey()) {
+      console.warn('[NiftyOptima] MSTOCK_API_KEY not set — open Settings tab or set Render Environment');
     } else {
-      const suffix = API_KEY.length >= 4 ? API_KEY.slice(-4) : '????';
+      const suffix = apiKey().length >= 4 ? apiKey().slice(-4) : '????';
       console.log(`[NiftyOptima] API key loaded (…${suffix}) — fetching live NIFTY 50 index (Type B)`);
       await bootstrapJwt();
       scheduleTotpJwtRefresh();
@@ -1840,7 +1867,7 @@ async function startHttp() {
       setInterval(() => {
         void refreshLiveIntradayBars();
         const s = resolveHeadlineSpot();
-        if (s != null && hasMstockSessionJwt(jwtToken, API_KEY)) {
+        if (s != null && hasMstockSessionJwt(jwtToken, apiKey())) {
           void refreshMstockOptionChain(s);
         }
       }, barsMs);
@@ -1867,7 +1894,7 @@ async function startHttp() {
     startFeedWithReconnect();
     const equityMs = Number(process.env.EQUITY_SCAN_MS || 30_000);
     setInterval(() => {
-      void processEquityWatchlist({ apiKey: API_KEY, jwt: jwtToken }, io).catch(() => {});
+      void processEquityWatchlist({ apiKey: apiKey(), jwt: jwtToken }, io).catch(() => {});
     }, equityMs);
     } catch (e) {
       console.error('[NiftyOptima] Startup failed:', e instanceof Error ? e.stack || e.message : e);
@@ -1881,6 +1908,26 @@ async function startHttp() {
     }
   })();
 }
+
+setEnvSettingsReloadHandler(async () => {
+  jwtToken = (process.env.MSTOCK_JWT_TOKEN || process.env.VITE_MSTOCK_JWT_TOKEN || '').trim();
+  mstockWsUrlOverride = (process.env.MSTOCK_WS_URL || '').trim();
+  if (!apiKey()) return;
+  try {
+    await bootstrapJwt();
+    scheduleTotpJwtRefresh();
+    await refreshNiftyIndexFromApi();
+    await refreshLiveIntradayBars();
+    if (!isMstockTypeBBlocked()) startMstockWsFeed();
+    else emitPublicFeedStatus();
+    console.log('[NiftyOptima] Applied settings from Settings page');
+  } catch (e) {
+    console.warn(
+      '[NiftyOptima] Reload after settings save:',
+      e instanceof Error ? e.message : e,
+    );
+  }
+});
 
 void startHttp().catch((err) => {
   console.error(err);

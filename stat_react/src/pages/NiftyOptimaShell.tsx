@@ -6,12 +6,14 @@ import { ViewModeBar, type ViewMode } from '../components/niftyoptima/ViewModeBa
 import { HistoryPage } from './HistoryPage';
 import { NiftyOptimaDashboard } from './NiftyOptimaDashboard';
 import { OrdersPage } from './OrdersPage';
+import { SettingsPage } from './SettingsPage';
 import { StocksPage } from './StocksPage';
 
 function AppBody({ tab, authTick }: { tab: ViewMode; authTick: number }) {
   if (tab === 'nifty') return <NiftyOptimaDashboard authTick={authTick} />;
   if (tab === 'stocks') return <StocksPage />;
   if (tab === 'orders') return <OrdersPage authTick={authTick} />;
+  if (tab === 'settings') return <SettingsPage />;
   return <HistoryPage authTick={authTick} />;
 }
 

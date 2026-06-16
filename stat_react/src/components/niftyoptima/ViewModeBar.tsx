@@ -1,7 +1,7 @@
 import type { EquityProfitableHint } from '../../context/EquityAlertsContext';
 import type { NiftyProfitableHint } from '../../context/NiftyAlertsContext';
 
-export type ViewMode = 'nifty' | 'stocks' | 'history' | 'orders';
+export type ViewMode = 'nifty' | 'stocks' | 'history' | 'orders' | 'settings';
 
 type Props = {
   mode: ViewMode;
@@ -15,6 +15,7 @@ const TABS: { id: ViewMode; label: string }[] = [
   { id: 'stocks', label: 'Stocks' },
   { id: 'orders', label: 'Orders' },
   { id: 'history', label: 'History (5D)' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 function tabHint(id: ViewMode, niftyHint?: NiftyProfitableHint | null, stockHint?: EquityProfitableHint | null) {

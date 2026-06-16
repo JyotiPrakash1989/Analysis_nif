@@ -1,5 +1,6 @@
 # Environment (never commit real API keys)
 .env
+stat_react/server/data/app-env-settings.json
 
 # Node
 node_modules/
