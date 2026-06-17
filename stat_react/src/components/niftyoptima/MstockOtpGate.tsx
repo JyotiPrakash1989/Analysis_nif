@@ -3,13 +3,43 @@ import { readJson } from '../../lib/apiJson';
 import { MSTOCK_LOGOUT_EVENT, MSTOCK_SHOW_LOGIN_EVENT } from '../../lib/mstockLogin';
 
 const apiBase = import.meta.env.VITE_NIFTYOPTIMA_API ?? '';
+const isProd = import.meta.env.PROD;
 
 type AuthStatus = {
   hasApiKey: boolean;
   authenticated: boolean;
   needsOtp: boolean;
+  needsApiKey?: boolean;
   serverReachable?: boolean;
 };
+
+function serverDownHint(): string {
+  if (isProd) {
+    return 'Server is waking up (Render free tier can take ~30s). Wait, then refresh — or open Settings and save your mStock API key first.';
+  }
+  return 'API server not reachable. In stat_react run npm run dev (starts API + Vite). Do not use npm run vite alone.';
+}
+
+function devServerHint(): string {
+  return isProd
+    ? 'Server response was empty — refresh the page and try again.'
+    : 'Empty response from server — run npm run dev (API + Vite together)';
+}
+
+async function fetchHealthOk(maxAttempts = 4): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${apiBase}/api/health`);
+      if (res.ok) return true;
+    } catch {
+      /* retry after cold start */
+    }
+    if (i < maxAttempts - 1) {
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+  return false;
+}
 
 type SessionErr = { message?: string; hint?: string; code?: string };
 
@@ -64,6 +94,7 @@ function MstockLoginForm({
   onClose,
 }: LoginFormProps) {
   const serverDown = status.serverReachable === false;
+  const setupRequired = Boolean(status.needsApiKey && !status.hasApiKey);
 
   return (
     <div className="w-full max-w-md rounded-xl border border-nox-line bg-nox-surface p-6 shadow-xl space-y-4">
@@ -87,15 +118,11 @@ function MstockLoginForm({
       </div>
 
       {serverDown ? (
-        <p className="text-sm text-rose-300">
-          API server not reachable. In <code className="text-rose-200">stat_react</code> run{' '}
-          <code className="text-rose-200">npm run dev</code> (starts API + Vite). Do not use{' '}
-          <code className="text-rose-200">npm run vite</code> alone.
-        </p>
-      ) : !status.hasApiKey ? (
+        <p className="text-sm text-rose-300">{serverDownHint()}</p>
+      ) : status.needsApiKey || !status.hasApiKey ? (
         <p className="text-sm text-rose-300">
           Server has no <code className="text-rose-200">MSTOCK_API_KEY</code> — open the{' '}
-          <strong>Settings</strong> tab and save your API key (or set it in Render Environment).
+          <strong>Settings</strong> tab, save your mStock credentials, then return here to log in.
         </p>
       ) : null}
 
@@ -107,7 +134,7 @@ function MstockLoginForm({
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
-            disabled={busy || serverDown}
+            disabled={busy || serverDown || setupRequired}
           />
         </label>
         <label className="block text-xs text-nox-muted">
@@ -118,7 +145,7 @@ function MstockLoginForm({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
-            disabled={busy || serverDown}
+            disabled={busy || serverDown || setupRequired}
           />
         </label>
         {fromEnv ? (
@@ -145,7 +172,7 @@ function MstockLoginForm({
             onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
             inputMode="numeric"
             placeholder="123456"
-            disabled={busy || serverDown}
+            disabled={busy || serverDown || setupRequired}
           />
         </label>
         <div className="flex gap-2">
@@ -160,7 +187,7 @@ function MstockLoginForm({
           <button
             type="button"
             onClick={onSubmitOtp}
-            disabled={busy || serverDown || otp.length < 4}
+            disabled={busy || serverDown || setupRequired || otp.length < 4}
             className="flex-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 py-2.5 text-sm font-semibold text-white"
           >
             Continue
@@ -190,26 +217,28 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
   const [loginOverlay, setLoginOverlay] = useState(false);
 
   const loadStatus = useCallback(async () => {
+    const reachable = await fetchHealthOk();
+    if (!reachable) {
+      setStatus({
+        hasApiKey: false,
+        authenticated: false,
+        needsOtp: false,
+        needsApiKey: true,
+        serverReachable: false,
+      });
+      return null;
+    }
     try {
-      const health = await fetch(`${apiBase}/api/health`);
-      if (!health.ok) {
-        setStatus({
-          hasApiKey: false,
-          authenticated: false,
-          needsOtp: true,
-          serverReachable: false,
-        });
-        return null;
-      }
       const res = await fetch(`${apiBase}/api/mstock/auth-status`);
       const j = await readJson<AuthStatus>(res);
       if (!res.ok || !j) {
-        setStatus({
-          hasApiKey: false,
-          authenticated: false,
-          needsOtp: true,
+        setStatus((prev) => ({
+          hasApiKey: prev?.hasApiKey ?? false,
+          authenticated: prev?.authenticated ?? false,
+          needsOtp: prev?.needsOtp ?? false,
+          needsApiKey: prev?.needsApiKey ?? true,
           serverReachable: true,
-        });
+        }));
         return null;
       }
       const next = { ...j, serverReachable: true };
@@ -217,12 +246,13 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
       if (next.authenticated) setLoginOverlay(false);
       return next;
     } catch {
-      setStatus({
-        hasApiKey: false,
-        authenticated: false,
-        needsOtp: true,
-        serverReachable: false,
-      });
+      setStatus((prev) => ({
+        hasApiKey: prev?.hasApiKey ?? false,
+        authenticated: prev?.authenticated ?? false,
+        needsOtp: prev?.needsOtp ?? false,
+        needsApiKey: prev?.needsApiKey ?? !prev?.hasApiKey,
+        serverReachable: true,
+      }));
       return null;
     }
   }, []);
@@ -230,6 +260,12 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  useEffect(() => {
+    if (status?.serverReachable !== false) return;
+    const t = window.setInterval(() => void loadStatus(), 5000);
+    return () => window.clearInterval(t);
+  }, [status?.serverReachable, loadStatus]);
 
   useEffect(() => {
     const open = () => setLoginOverlay(true);
@@ -278,7 +314,7 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
       });
       const j = await readJson<{ message?: string }>(res);
       if (!res.ok) throw new Error(j?.message || `Could not send OTP (HTTP ${res.status})`);
-      if (!j) throw new Error('Empty response from server — run npm run dev (API + Vite together)');
+      if (!j) throw new Error(devServerHint());
       setOtpSent(true);
       setMessage('OTP sent to your registered mobile. Enter it below.');
     } catch (e) {
@@ -313,12 +349,19 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
         throw new Error(
           res.ok
             ? 'Empty response from server'
-            : `Server error (HTTP ${res.status}) — is the API running? Use npm run dev`,
+            : isProd
+              ? `Server error (HTTP ${res.status}) — refresh and try again, or save credentials in Settings first.`
+              : `Server error (HTTP ${res.status}) — is the API running? Use npm run dev`,
         );
       }
       if (!res.ok) {
         throw new Error(formatLoginError(j));
       }
+      setStatus((prev) =>
+        prev
+          ? { ...prev, serverReachable: true, authenticated: true, needsOtp: false, needsApiKey: false }
+          : prev,
+      );
       setMessage('Connected. Loading live NIFTY & option chain…');
       try {
         const sync = await fetch(`${apiBase}/api/mstock/sync-session`, { method: 'POST' });
@@ -339,6 +382,8 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
       if (next?.authenticated) {
         setLoginOverlay(false);
         onAuthenticated?.();
+      } else if (next && !next.hasApiKey) {
+        setMessage('Logged in to mStock, but MSTOCK_API_KEY is missing on the server — save it in Settings, then log in again.');
       }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'OTP verification failed');
@@ -355,7 +400,7 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
     );
   }
 
-  const gateActive = status.needsOtp;
+  const gateActive = status.needsOtp || Boolean(status.needsApiKey);
   const overlayActive = loginOverlay && !gateActive;
 
   if (!gateActive && !overlayActive) {

@@ -288,10 +288,12 @@ function clearMstockSession() {
 
 app.get('/api/mstock/auth-status', (_req, res) => {
   const key = apiKey();
+  const authenticated = hasMstockSessionJwt(jwtToken, key);
   res.json({
     hasApiKey: Boolean(key),
-    authenticated: hasMstockSessionJwt(jwtToken, key),
-    needsOtp: Boolean(key && !hasMstockSessionJwt(jwtToken, key)),
+    authenticated,
+    needsOtp: Boolean(key && !authenticated),
+    needsApiKey: !key,
     apiKeySuffix: key.length >= 4 ? key.slice(-4) : '',
     ipBlocked: isMstockTypeBBlocked(),
     ipBlockMessage: getMstockTypeBBlockMessage(),
