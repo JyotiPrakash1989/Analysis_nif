@@ -16,6 +16,10 @@ services:
         value: "1"
       - key: MSTOCK_API_KEY
         sync: false
+      - key: MSTOCK_USERNAME
+        sync: false
+      - key: MSTOCK_PASSWORD
+        sync: false
       - key: MSTOCK_JWT_TOKEN
         sync: false
       - key: MSTOCK_TOTP_SECRET

@@ -108,9 +108,12 @@ import {
 } from './mstockApiGuard.mjs';
 import {
   getEnvSettingsForClient,
+  getEffectiveEnv,
+  importMstockCredentialsFromEnv,
   loadStoredEnvIntoProcess,
   removeStoredEnvKeys,
   saveEnvSettings,
+  seedMstockCredentialsFromEnv,
   setEnvSettingsReloadHandler,
 } from './appEnvSettings.mjs';
 
@@ -118,6 +121,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Repo root (Nif/.env) then stat_react/.env — later files override.
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 dotenv.config({ path: path.join(__dirname, '..', '.env'), override: true });
+if (seedMstockCredentialsFromEnv()) {
+  console.log('[NiftyOptima] Seeded mStock credentials from .env into settings file');
+}
 loadStoredEnvIntoProcess();
 
 const CLOUD_PORT = process.env.PORT ? Number(process.env.PORT) : null;
@@ -307,11 +313,11 @@ app.post('/api/mstock/logout', async (_req, res) => {
   });
 });
 
-/** Pre-fill login form from server .env (local dev only). */
+/** Pre-fill login form from stored settings or server .env. */
 app.get('/api/mstock/login-hints', (_req, res) => {
   res.json({
-    username: String(process.env.MSTOCK_USERNAME || '').trim(),
-    password: String(process.env.MSTOCK_PASSWORD || '').trim(),
+    username: getEffectiveEnv('MSTOCK_USERNAME'),
+    password: getEffectiveEnv('MSTOCK_PASSWORD'),
     hasApiKey: Boolean(apiKey()),
   });
 });
@@ -335,8 +341,8 @@ app.get('/api/mstock/my-ip', async (_req, res) => {
 });
 
 app.post('/api/mstock/request-otp', async (req, res) => {
-  const username = String(req.body?.username || process.env.MSTOCK_USERNAME || '').trim();
-  const password = String(req.body?.password || process.env.MSTOCK_PASSWORD || '').trim();
+  const username = String(req.body?.username || getEffectiveEnv('MSTOCK_USERNAME') || '').trim();
+  const password = String(req.body?.password || getEffectiveEnv('MSTOCK_PASSWORD') || '').trim();
   if (!username || !password) {
     return res.status(400).json({
       status: false,
@@ -368,7 +374,14 @@ app.post('/api/mstock/historical', (req, res) => {
 });
 
 app.post('/api/mstock/session-token', async (req, res) => {
-  if (!apiKey()) return res.status(500).json({ status: false, message: 'MSTOCK_API_KEY not set' });
+  if (!apiKey()) {
+    return res.status(500).json({
+      status: false,
+      message: 'MSTOCK_API_KEY not set',
+      hint: 'Add MSTOCK_API_KEY in Render Dashboard → Environment (or Settings tab), then retry login.',
+      code: 'API_KEY_MISSING',
+    });
+  }
   const requestToken = String(req.body?.requestToken || req.body?.otp || '').trim();
   const checksum = String(req.body?.checksum || process.env.MSTOCK_CHECKSUM || 'L').trim();
   if (!requestToken) {
@@ -382,12 +395,18 @@ app.post('/api/mstock/session-token', async (req, res) => {
     const result = await establishMstockSession(apiKey(), requestToken, checksum);
     applyAccessToken(result.accessToken);
     startMstockWsFeed();
-    const sync = await syncMstockSessionData();
+    // Respond immediately — sync runs in background (Render gateway ~30s timeout if awaited here).
+    void syncMstockSessionData().catch((syncErr) => {
+      console.warn(
+        '[NiftyOptima] post-login sync failed:',
+        syncErr instanceof Error ? syncErr.message : syncErr,
+      );
+    });
     return res.json({
       status: true,
       message: 'Session connected',
-      barsLoaded: sync.barsCount,
-      optionChainLive: sync.optionChainLive,
+      barsLoaded: 0,
+      optionChainLive: false,
       source: result.source,
       expires: 'midnight (same day)',
       wsEnabled: Boolean(getMstockWsUrl()),
@@ -427,12 +446,17 @@ app.post('/api/mstock/verify-totp', async (req, res) => {
     const { accessToken } = await mstockVerifyTotp(apiKey(), totp);
     applyAccessToken(accessToken);
     startMstockWsFeed();
-    const sync = await syncMstockSessionData();
+    void syncMstockSessionData().catch((syncErr) => {
+      console.warn(
+        '[NiftyOptima] post-TOTP sync failed:',
+        syncErr instanceof Error ? syncErr.message : syncErr,
+      );
+    });
     return res.json({
       status: true,
       message: 'Session token from verifytotp',
-      barsLoaded: sync.barsCount,
-      optionChainLive: sync.optionChainLive,
+      barsLoaded: 0,
+      optionChainLive: false,
       source: 'https://api.mstock.trade/openapi/typea/session/verifytotp',
       expires: 'midnight (same day)',
       wsEnabled: Boolean(getMstockWsUrl()),
@@ -799,6 +823,17 @@ app.post('/api/settings/env', async (req, res) => {
     const patch = req.body?.patch && typeof req.body.patch === 'object' ? req.body.patch : req.body;
     const clearKeys = Array.isArray(req.body?.clearKeys) ? req.body.clearKeys : [];
     const out = await saveEnvSettings(patch || {}, { clearKeys });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+});
+
+app.post('/api/settings/env/import-from-env', async (_req, res) => {
+  try {
+    const out = await importMstockCredentialsFromEnv();
     res.json(out);
   } catch (e) {
     res.status(500).json({

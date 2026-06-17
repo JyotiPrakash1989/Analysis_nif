@@ -23,6 +23,9 @@ function formatLoginError(j: SessionErr): string {
   if (j.code === 'API_KEY_INVALID') {
     return j.hint || j.message || 'API key not valid on mStock. Generate a new key on trade.mstock.com.';
   }
+  if (j.code === 'API_KEY_MISSING') {
+    return j.hint || j.message || 'Set MSTOCK_API_KEY in Render Environment or the Settings tab.';
+  }
   const msg = j.message || 'Login failed';
   return j.hint ? `${msg} ${j.hint}` : msg;
 }
@@ -300,6 +303,13 @@ export function MstockOtpGate({ children, onAuthenticated }: Props) {
       });
       const j = await readJson<SessionErr & { status?: boolean }>(res);
       if (!j) {
+        if (res.status === 502 || res.status === 504) {
+          throw new Error(
+            'Request timed out (HTTP ' +
+              res.status +
+              '). On Render, redeploy after setting MSTOCK_API_KEY. If login still fails, refresh and try again.',
+          );
+        }
         throw new Error(
           res.ok
             ? 'Empty response from server'

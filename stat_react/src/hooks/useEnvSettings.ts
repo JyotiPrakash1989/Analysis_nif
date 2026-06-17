@@ -17,6 +17,8 @@ export type EnvSettingsResponse = {
   fields: EnvField[];
   updatedAt: number | null;
   settingsFile: string;
+  importableFromEnv?: boolean;
+  credentialKeys?: string[];
 };
 
 export function useEnvSettings() {
@@ -59,7 +61,7 @@ export function useEnvSettings() {
         const j = await res.json();
         if (!res.ok) throw new Error(j?.message || `HTTP ${res.status}`);
         setData(j as EnvSettingsResponse);
-        setSaveOk('Saved — mStock connection refreshed.');
+        setSaveOk('Saved — mStock credentials stored on server.');
         window.dispatchEvent(new Event('mstock-auth-ok'));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Save failed');
@@ -70,5 +72,27 @@ export function useEnvSettings() {
     []
   );
 
-  return { data, loading, saving, error, saveOk, refresh, save };
+  const importFromEnv = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    setSaveOk(null);
+    try {
+      const res = await fetch(`${apiBase}/api/settings/env/import-from-env`, { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.message || `HTTP ${res.status}`);
+      setData(j as EnvSettingsResponse);
+      if (j.changed) {
+        setSaveOk('Imported from .env — mStock credentials stored on server.');
+        window.dispatchEvent(new Event('mstock-auth-ok'));
+      } else {
+        setSaveOk('Nothing to import — enter values below or set them in .env / Render Environment.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { data, loading, saving, error, saveOk, refresh, save, importFromEnv };
 }

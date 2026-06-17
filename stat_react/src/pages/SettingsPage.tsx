@@ -1,9 +1,69 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useEnvSettings } from '../hooks/useEnvSettings';
+import { useEnvSettings, type EnvField } from '../hooks/useEnvSettings';
 import { useMstockAuth } from '../hooks/useMstockAuth';
 
+const CREDENTIAL_KEYS = new Set([
+  'MSTOCK_API_KEY',
+  'MSTOCK_APP_NAME',
+  'MSTOCK_TOTP_SECRET',
+  'MSTOCK_USERNAME',
+  'MSTOCK_PASSWORD',
+]);
+
+function EnvFieldInput({
+  field,
+  draft,
+  cleared,
+  onChange,
+  onClear,
+}: {
+  field: EnvField;
+  draft: Record<string, string>;
+  cleared: boolean;
+  onChange: (key: string, value: string) => void;
+  onClear: (key: string) => void;
+}) {
+  const showMasked = field.secret && field.isSet && !cleared && !draft[field.key];
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs text-nox-muted">
+        {field.label}{' '}
+        <code className="text-[10px] text-cyan-300/70">{field.key}</code>
+      </span>
+      <div className="flex gap-2">
+        <input
+          type={field.secret ? 'password' : 'text'}
+          className="flex-1 rounded-lg bg-nox-bg border border-nox-line px-3 py-2 text-sm text-white"
+          placeholder={showMasked ? `${field.masked} (leave blank to keep)` : field.secret ? 'Enter value' : ''}
+          value={draft[field.key] ?? ''}
+          onChange={(e) => onChange(field.key, e.target.value)}
+          autoComplete={field.secret ? 'off' : 'on'}
+        />
+        {field.secret && field.isSet && (
+          <button
+            type="button"
+            className="shrink-0 rounded-lg border border-nox-line px-3 py-2 text-xs text-nox-muted hover:text-white"
+            onClick={() => onClear(field.key)}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <span className="text-[10px] text-nox-muted">
+        {cleared
+          ? 'Will be removed on save'
+          : field.source === 'settings'
+            ? 'Stored in settings file'
+            : field.source === 'env'
+              ? 'From server .env (save to persist on Render)'
+              : 'Not set'}
+      </span>
+    </label>
+  );
+}
+
 export function SettingsPage() {
-  const { data, loading, saving, error, saveOk, refresh, save } = useEnvSettings();
+  const { data, loading, saving, error, saveOk, refresh, save, importFromEnv } = useEnvSettings();
   const { status: auth, busy: authBusy, message: authMessage, login, logout } = useMstockAuth();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [clearKeys, setClearKeys] = useState<Set<string>>(new Set());
@@ -18,10 +78,18 @@ export function SettingsPage() {
     setClearKeys(new Set());
   }, [data]);
 
-  const groups = useMemo(() => {
+  const credentialFields = useMemo(() => {
+    if (!data) return [];
+    const order = data.credentialKeys?.length ? data.credentialKeys : [...CREDENTIAL_KEYS];
+    const byKey = new Map(data.fields.map((f) => [f.key, f]));
+    return order.map((key) => byKey.get(key)).filter((f): f is EnvField => Boolean(f));
+  }, [data]);
+
+  const otherGroups = useMemo(() => {
     if (!data) return [];
     const map = new Map<string, typeof data.fields>();
     for (const f of data.fields) {
+      if (CREDENTIAL_KEYS.has(f.key)) continue;
       const list = map.get(f.group) || [];
       list.push(f);
       map.set(f.group, list);
@@ -64,8 +132,8 @@ export function SettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-white">Environment settings</h1>
         <p className="text-sm text-nox-muted mt-1">
-          Configure mStock and feed options here (saved on the server). Local <code className="text-cyan-300">.env</code>{' '}
-          files are not deployed to Render — use this page instead.
+          Store your mStock credentials here (same as repo <code className="text-cyan-300">.env</code> lines 2–6).
+          Local <code className="text-cyan-300">.env</code> is not deployed to Render — save on this page instead.
         </p>
       </div>
 
@@ -85,9 +153,7 @@ export function SettingsPage() {
                 : 'Save your mStock API key below, then log in with SMS OTP.'}
         </p>
         {auth?.apiKeySuffix ? (
-          <p className="text-[11px] text-nox-muted">
-            API key on server: ••••{auth.apiKeySuffix}
-          </p>
+          <p className="text-[11px] text-nox-muted">API key on server: ••••{auth.apiKeySuffix}</p>
         ) : null}
         <div className="flex flex-wrap gap-2">
           <button
@@ -116,42 +182,52 @@ export function SettingsPage() {
 
       {!loading && data && (
         <form onSubmit={(e) => void onSubmit(e)} className="space-y-6">
-          {groups.map(([group, fields]) => (
+          <section className="rounded-xl border border-cyan-900/50 bg-nox-surface/80 p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-cyan-300 uppercase tracking-wide">
+                  mStock credentials (.env)
+                </h2>
+                <p className="text-xs text-nox-muted mt-1">
+                  MSTOCK_API_KEY, MSTOCK_APP_NAME, MSTOCK_TOTP_SECRET, MSTOCK_USERNAME, MSTOCK_PASSWORD
+                </p>
+              </div>
+              {data.importableFromEnv ? (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void importFromEnv()}
+                  className="shrink-0 rounded-lg border border-cyan-700/60 bg-cyan-950/40 hover:bg-cyan-900/40 disabled:opacity-50 px-3 py-2 text-xs font-medium text-cyan-200"
+                >
+                  Import from .env
+                </button>
+              ) : null}
+            </div>
+            {credentialFields.map((f) => (
+              <EnvFieldInput
+                key={f.key}
+                field={f}
+                draft={draft}
+                cleared={clearKeys.has(f.key)}
+                onChange={onChange}
+                onClear={onClear}
+              />
+            ))}
+          </section>
+
+          {otherGroups.map(([group, fields]) => (
             <section key={group} className="rounded-xl border border-nox-line bg-nox-surface/60 p-4 space-y-3">
               <h2 className="text-sm font-semibold text-sky-300 uppercase tracking-wide">{group}</h2>
-              {fields.map((f) => {
-                const cleared = clearKeys.has(f.key);
-                const showMasked = f.secret && f.isSet && !cleared && !draft[f.key];
-                return (
-                  <label key={f.key} className="block space-y-1">
-                    <span className="text-xs text-nox-muted">{f.label}</span>
-                    <div className="flex gap-2">
-                      <input
-                        type={f.secret ? 'password' : 'text'}
-                        className="flex-1 rounded-lg bg-nox-bg border border-nox-line px-3 py-2 text-sm text-white"
-                        placeholder={
-                          showMasked ? `${f.masked} (leave blank to keep)` : f.secret ? 'Enter value' : ''
-                        }
-                        value={draft[f.key] ?? ''}
-                        onChange={(e) => onChange(f.key, e.target.value)}
-                        autoComplete={f.secret ? 'off' : 'on'}
-                      />
-                      {f.secret && f.isSet && (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-lg border border-nox-line px-3 py-2 text-xs text-nox-muted hover:text-white"
-                          onClick={() => onClear(f.key)}
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-nox-muted">
-                      {cleared ? 'Will be removed on save' : f.source === 'settings' ? 'From settings file' : f.source === 'env' ? 'From server env' : 'Not set'}
-                    </span>
-                  </label>
-                );
-              })}
+              {fields.map((f) => (
+                <EnvFieldInput
+                  key={f.key}
+                  field={f}
+                  draft={draft}
+                  cleared={clearKeys.has(f.key)}
+                  onChange={onChange}
+                  onClear={onClear}
+                />
+              ))}
             </section>
           ))}
 
@@ -173,9 +249,10 @@ export function SettingsPage() {
           </div>
 
           <p className="text-[11px] text-nox-muted">
-            Stored in <code className="text-cyan-300/80">{data.settingsFile}</code>. After save, whitelist your
-            server IP on trade.mstock.com, then use <strong className="text-slate-300">Log in with SMS OTP</strong>{' '}
-            above.
+            Stored in <code className="text-cyan-300/80">{data.settingsFile}</code>. On first local run,
+            credentials are copied from <code className="text-cyan-300/80">Nif/.env</code> automatically.
+            After save, whitelist your server IP on trade.mstock.com, then use{' '}
+            <strong className="text-slate-300">Log in with SMS OTP</strong> above.
           </p>
         </form>
       )}

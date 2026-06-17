@@ -35,6 +35,15 @@ export const ENV_FIELD_DEFS = [
 
 const ALLOWED_KEYS = new Set(ENV_FIELD_DEFS.map((f) => f.key));
 
+/** Core mStock account fields (repo `.env` lines 2–6). */
+export const MSTOCK_CREDENTIAL_KEYS = [
+  'MSTOCK_API_KEY',
+  'MSTOCK_APP_NAME',
+  'MSTOCK_TOTP_SECRET',
+  'MSTOCK_USERNAME',
+  'MSTOCK_PASSWORD',
+];
+
 let reloadHandler = async () => {};
 
 export function setEnvSettingsReloadHandler(fn) {
@@ -80,6 +89,65 @@ function effectiveValue(key) {
   return '';
 }
 
+export function getEffectiveEnv(key) {
+  return effectiveValue(key);
+}
+
+function envValueOnly(key) {
+  const fromEnv = process.env[key];
+  return fromEnv != null && String(fromEnv).trim() !== '' ? String(fromEnv).trim() : '';
+}
+
+function isStoredInSettingsFile(key) {
+  const v = readStoredRaw()[key];
+  return v != null && String(v).trim() !== '';
+}
+
+/** Copy missing mStock credentials from process.env (dotenv) into settings file. */
+export function seedMstockCredentialsFromEnv() {
+  const stored = { ...readStoredRaw() };
+  let changed = false;
+  for (const key of MSTOCK_CREDENTIAL_KEYS) {
+    if (isStoredInSettingsFile(key)) continue;
+    const fromEnv = envValueOnly(key);
+    if (!fromEnv) continue;
+    stored[key] = fromEnv;
+    changed = true;
+  }
+  if (changed) writeStoredRaw(stored);
+  return changed;
+}
+
+/** True when server env has a credential not yet saved in settings file. */
+export function hasImportableMstockCredentials() {
+  for (const key of MSTOCK_CREDENTIAL_KEYS) {
+    if (isStoredInSettingsFile(key)) continue;
+    if (envValueOnly(key)) return true;
+  }
+  return false;
+}
+
+/** Force-save all mStock credentials from process.env into settings file. */
+export async function importMstockCredentialsFromEnv() {
+  const stored = { ...readStoredRaw() };
+  let changed = false;
+  for (const key of MSTOCK_CREDENTIAL_KEYS) {
+    const fromEnv = envValueOnly(key);
+    if (!fromEnv) continue;
+    stored[key] = fromEnv;
+    process.env[key] = fromEnv;
+    changed = true;
+  }
+  if (changed) {
+    writeStoredRaw(stored);
+    await reloadHandler();
+  }
+  return {
+    changed,
+    ...getEnvSettingsForClient(),
+  };
+}
+
 function maskSecret(value) {
   const s = String(value || '');
   if (!s) return '';
@@ -99,6 +167,8 @@ export function loadStoredEnvIntoProcess() {
 export function getEnvSettingsForClient() {
   const stored = readStoredRaw();
   return {
+    importableFromEnv: hasImportableMstockCredentials(),
+    credentialKeys: MSTOCK_CREDENTIAL_KEYS,
     fields: ENV_FIELD_DEFS.map((def) => {
       const value = effectiveValue(def.key);
       return {
